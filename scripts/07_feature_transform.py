@@ -220,7 +220,7 @@ def main():
         # Save results
         results_dir = Path(REPO_ROOT) / 'artifacts' / 'feature_transformation'
         results_dir.mkdir(parents=True, exist_ok=True)
-        
+
         import json
         results_file = results_dir / 'transformation_selection.json'
         with open(results_file, 'w') as f:
@@ -228,8 +228,12 @@ def main():
                 'final_transforms': final_transforms,
                 'aggregated_metrics': {
                     feat: {
-                        'mean_pearson': float(agg['mean_pearson']),
-                        'mean_df': float(agg['mean_df'])
+                        'selected_transform': final_transforms.get(feat, 'identity'),
+                        'most_frequent_transform': agg['most_frequent_transform'],
+                        'stability': float(agg['stability']),
+                        'n_splits': agg['n_splits'],
+                        'avg_scores': {k: float(v) for k, v in agg['avg_scores'].items()},
+                        'frequency_count': agg['frequency_count']
                     }
                     for feat, agg in aggregated.items()
                 }
