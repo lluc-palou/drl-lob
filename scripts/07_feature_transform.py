@@ -191,10 +191,14 @@ def main():
         
         # Process each split
         all_split_results = {}
-        
+
         for split_id in range(MAX_SPLITS):
-            # Process split
-            split_results = processor.process_split(split_id, feature_names)
+            # Process split - pass both filtered and full feature lists
+            split_results = processor.process_split(
+                split_id=split_id,
+                feature_names=feature_names,  # Transformable features only
+                all_feature_names=all_feature_names  # Full list for array validation
+            )
             all_split_results[split_id] = split_results
             
             # Log to MLflow
