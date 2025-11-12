@@ -79,7 +79,7 @@ from src.feature_standardization.mlflow_logger import (
 
 DB_NAME = "raw"
 INPUT_COLLECTION_PREFIX = "split_"
-INPUT_COLLECTION_SUFFIX = "_output"  # Read from transformation output
+INPUT_COLLECTION_SUFFIX = "_input"  # Read from materialized splits (stage 6)
 
 MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 MLFLOW_EXPERIMENT_NAME = "Feature_Standardization"
