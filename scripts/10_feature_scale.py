@@ -66,7 +66,7 @@ from src.feature_standardization import (
     EWMAHalfLifeProcessor,
     aggregate_across_splits,
     select_final_half_lives,
-    identify_feature_names
+    identify_feature_names_from_collection
 )
 from src.feature_standardization.mlflow_logger import (
     log_split_results,
@@ -162,19 +162,18 @@ def main():
     )
     
     try:
-        # Get feature names from first split
+        # Get feature names from first split using aggregation
         logger('', "INFO")
         logger('Identifying features...', "INFO")
         first_split = f"{INPUT_COLLECTION_PREFIX}0{INPUT_COLLECTION_SUFFIX}"
-        sample_df = (
-            spark.read.format("mongodb")
-            .option("database", DB_NAME)
-            .option("collection", first_split)
-            .load()
-            .limit(1)
+        logger(f'Reading feature names from collection: {first_split}', "INFO")
+
+        # Use aggregation-based function to avoid Spark schema inference issues
+        all_feature_names = identify_feature_names_from_collection(
+            spark=spark,
+            db_name=DB_NAME,
+            collection=first_split
         )
-        
-        all_feature_names = identify_feature_names(sample_df)
         logger(f'Total features in split collections: {len(all_feature_names)}', "INFO")
         
         # Filter to standardizable features only
