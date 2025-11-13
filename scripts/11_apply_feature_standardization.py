@@ -33,10 +33,10 @@ from src.feature_standardization.apply_scaler import EWMAStandardizationApplicat
 
 DB_NAME = "raw"
 INPUT_COLLECTION_PREFIX = "split_"
-INPUT_COLLECTION_SUFFIX = "_input"  # Read from transformation output
+INPUT_COLLECTION_SUFFIX = "_output"  # Read from transformation output (stage 8)
 
 OUTPUT_COLLECTION_PREFIX = "split_"
-OUTPUT_COLLECTION_SUFFIX = "_output"  # Write for next stage (cyclic pattern)
+OUTPUT_COLLECTION_SUFFIX = "_standardized"  # Write standardized features for final use
 
 # Path to half-life selection results (relative to repository root)
 HALFLIFE_RESULTS_PATH = Path(REPO_ROOT) / "artifacts" / "ewma_halflife_selection" / "aggregation" / "final_halflifes.json"
