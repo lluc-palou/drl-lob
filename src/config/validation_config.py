@@ -18,7 +18,7 @@ MASTER_SEED = int(os.environ.get('CPCV_MASTER_SEED', 42))
 TEST_RATIO = float(os.environ.get('CPCV_TEST_RATIO', 0.20))
 
 # Number of temporal folds for CPCV
-N_FOLDS = int(os.environ.get('CPCV_N_FOLDS', 10))
+N_FOLDS = int(os.environ.get('CPCV_N_FOLDS', 8))
 
 # Number of validation folds (k in CPCV k-fold validation)
 K_VALIDATION_FOLDS = int(os.environ.get('CPCV_K_VALIDATION_FOLDS', 2))

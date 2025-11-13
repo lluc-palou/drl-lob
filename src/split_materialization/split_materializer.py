@@ -22,6 +22,7 @@ class SplitMaterializer:
             input_collection: Input collection name (from standardization stage)
             config: Configuration dictionary with:
                 - create_test_collection: Whether to create test_data collection
+                - max_splits: Limit number of splits to materialize (None = all splits, for debugging)
         """
         self.spark = spark
         self.db_name = db_name
@@ -61,6 +62,12 @@ class SplitMaterializer:
         split_ids = sorted([int(field.name) for field in split_roles_schema.fields])
 
         logger(f'Found {len(split_ids)} splits: {split_ids}', "INFO")
+
+        # Apply max_splits limit if configured (for debugging)
+        max_splits = self.config.get('max_splits')
+        if max_splits is not None:
+            split_ids = split_ids[:max_splits]
+            logger(f'Limiting to first {max_splits} splits for debugging: {split_ids}', "INFO")
 
         self.split_ids = split_ids
     

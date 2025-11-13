@@ -56,6 +56,7 @@ INPUT_COLLECTION = CYCLIC_INPUT_COLLECTION  # Output from Stage 5 (LOB standardi
 # Split materialization configuration
 CONFIG = {
     "create_test_collection": True,  # Create separate test_data collection
+    "max_splits": None,  # Limit splits for debugging (None = process all splits)
 }
 
 # Spark configuration (from central config)
