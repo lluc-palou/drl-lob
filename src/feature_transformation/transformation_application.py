@@ -64,12 +64,64 @@ def apply_transformations_direct(
         logger(f"  ... and {len(transform_map) - 5} more", "INFO")
 
     # Create pandas UDF for vectorized transformation
+    # Must be self-contained (no external function calls in workers)
     @pandas_udf(ArrayType(DoubleType()))
     def transform_features_udf(features_series: pd.Series) -> pd.Series:
         """
         Vectorized transformation using pandas UDF.
         Processes batches of rows efficiently.
+        Self-contained - all logic embedded to work in worker processes.
         """
+        def apply_transform(value: float, transform_type: str, params: dict) -> float:
+            """Apply single transformation (embedded in UDF for worker compatibility)."""
+            result = None
+
+            if transform_type == 'log':
+                offset = params.get('offset', 0.0)
+                if (value + offset) > 0:
+                    result = math.log(value + offset)
+
+            elif transform_type == 'log1p':
+                offset = params.get('offset', 0.0)
+                if (value + offset) >= 0:
+                    result = math.log(value + offset + 1.0)
+
+            elif transform_type == 'sqrt':
+                offset = params.get('offset', 0.0)
+                if (value + offset) >= 0:
+                    result = math.sqrt(value + offset)
+
+            elif transform_type == 'arcsinh':
+                result = float(np.arcsinh(value))
+
+            elif transform_type == 'box_cox':
+                lambda_param = params.get('lambda', 1.0)
+                offset = params.get('offset', 0.0)
+
+                if (value + offset) > 0:
+                    if abs(lambda_param) < 1e-10:
+                        result = math.log(value + offset)
+                    else:
+                        result = (math.pow(value + offset, lambda_param) - 1.0) / lambda_param
+
+            elif transform_type == 'yeo_johnson':
+                lambda_param = params.get('lambda', 1.0)
+
+                if value >= 0:
+                    if abs(lambda_param) < 1e-10:
+                        result = math.log(value + 1.0)
+                    else:
+                        result = (math.pow(value + 1.0, lambda_param) - 1.0) / lambda_param
+                else:
+                    if abs(lambda_param - 2.0) < 1e-10:
+                        result = -math.log(-value + 1.0)
+                    else:
+                        result = -(math.pow(-value + 1.0, 2.0 - lambda_param) - 1.0) / (2.0 - lambda_param)
+
+            if result is not None:
+                return float(result)
+            return value
+
         def transform_row(features_array):
             if features_array is None:
                 return features_array
@@ -85,7 +137,7 @@ def apply_transformations_direct(
                     continue
 
                 try:
-                    transformed_value = apply_single_transform(
+                    transformed_value = apply_transform(
                         float(original_value),
                         info['type'],
                         info['params']
