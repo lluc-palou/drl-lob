@@ -265,7 +265,29 @@ def run_stage_with_swap(pipeline_mgr: CyclicPipelineManager,
     if stage_info["swap_after"]:
         log_section(f"Swapping Collections After Stage {stage_num}")
         try:
-            pipeline_mgr.swap_working_collections()
+            # Stage 2 is special: it's the first stage, so input doesn't exist yet
+            # Just rename output -> input (no drop needed)
+            if stage_num == 2:
+                from pymongo import MongoClient
+                client = MongoClient(CONFIG['mongo_uri'])
+                db = client[CONFIG['db_name']]
+
+                # Drop old input if it exists (cleanup from previous runs)
+                if 'input' in db.list_collection_names():
+                    db['input'].drop()
+                    logger("Dropped existing 'input' collection", "INFO")
+
+                # Rename output -> input
+                if 'output' in db.list_collection_names():
+                    db['output'].rename('input')
+                    logger("Renamed 'output' -> 'input'", "INFO")
+                else:
+                    raise ValueError("Output collection 'output' does not exist!")
+
+                client.close()
+            else:
+                # Stages 3-5: normal swap (drop input, rename output -> input)
+                pipeline_mgr.swap_working_collections()
         except Exception as e:
             logger(f"Swap failed: {str(e)}", "ERROR")
             return False
