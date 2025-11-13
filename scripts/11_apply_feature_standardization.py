@@ -27,6 +27,9 @@ from src.feature_standardization import (
 )
 from src.feature_standardization.apply_scaler import EWMAStandardizationApplicator
 
+# Import per-split cyclic manager for collection cleanup
+from src.split_materialization.per_split_cyclic_manager import PerSplitCyclicManager
+
 # Import centralized configuration
 from src.config import (
     DB_NAME,
@@ -66,6 +69,9 @@ DRIVER_MEMORY = SPARK_DRIVER_MEMORY_DEFAULT
 
 def main():
     """Main execution function."""
+    # Check if running from orchestrator
+    is_orchestrated = os.environ.get('PIPELINE_ORCHESTRATED', 'false') == 'true'
+
     logger('=' * 80, "INFO")
     logger('APPLY EWMA STANDARDIZATION', "INFO")
     logger('=' * 80, "INFO")
@@ -146,7 +152,7 @@ def main():
         
         logger(f'Total features: {len(all_feature_names)}', "INFO")
         logger(f'Standardizing: {len(final_halflifes)} features', "INFO")
-        
+
         # Initialize applicator
         applicator = EWMAStandardizationApplicator(
             spark=spark,
@@ -154,10 +160,17 @@ def main():
             final_halflifes=final_halflifes,
             clip_std=CLIP_STD
         )
-        
+
+        # Initialize collection manager for cleanup
+        manager = PerSplitCyclicManager(MONGO_URI, DB_NAME)
+
         # Process each split
         for split_id in split_ids:
             logger('', "INFO")  # Blank line
+
+            # Clear output collection before processing (prevent duplication)
+            logger(f'Preparing split {split_id} for processing...', "INFO")
+            manager.prepare_split_for_processing(split_id, force=True)
 
             # Apply standardization
             total_processed = applicator.apply_to_split(
@@ -182,31 +195,17 @@ def main():
         logger('=' * 80, "INFO")
         logger(f'Processed {len(split_ids)} splits', "INFO")
 
-        # Rename collections: output -> input (cyclic pattern for next stage)
+        # ✅ FIX: Use consistent swap logic from cyclic manager
         logger('', "INFO")
-        logger('Renaming collections for cyclic pattern...', "INFO")
-
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI)
-        db = client[DB_NAME]
+        logger('Swapping collections for cyclic pattern...', "INFO")
 
         for split_id in split_ids:
-            output_collection = f"{OUTPUT_COLLECTION_PREFIX}{split_id}{OUTPUT_COLLECTION_SUFFIX}"
-            input_collection = f"{INPUT_COLLECTION_PREFIX}{split_id}{INPUT_COLLECTION_SUFFIX}"
-            
-            # Drop old input collection if exists
-            if input_collection in db.list_collection_names():
-                db[input_collection].drop()
-                logger(f'  Dropped old {input_collection}', "INFO")
-            
-            # Rename output -> input
-            db[output_collection].rename(input_collection)
-            logger(f'  Renamed {output_collection} -> {input_collection}', "INFO")
-        
-        client.close()
-        
+            manager.swap_split_to_input(split_id)
+
+        manager.close()
+
         logger('', "INFO")
-        logger('Collection renaming complete', "INFO")
+        logger('Collection swapping complete', "INFO")
         logger(f'Next stage will read from: {INPUT_COLLECTION_PREFIX}{{split_ids}}{INPUT_COLLECTION_SUFFIX}', "INFO")
         
     finally:
@@ -217,6 +216,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check if running from orchestrator
-    is_orchestrated = os.environ.get('PIPELINE_ORCHESTRATED', 'false') == 'true'
     main()
