@@ -27,25 +27,38 @@ from src.feature_standardization import (
 )
 from src.feature_standardization.apply_scaler import EWMAStandardizationApplicator
 
+# Import centralized configuration
+from src.config import (
+    DB_NAME,
+    MONGO_URI,
+    SPARK_JAR_PATH,
+    SPARK_DRIVER_MEMORY_DEFAULT,
+    SPLIT_COLLECTION_PREFIX,
+    SPLIT_COLLECTION_SUFFIX_INPUT,
+    SPLIT_COLLECTION_SUFFIX_OUTPUT,
+    STANDARDIZATION_CONFIG,
+)
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-DB_NAME = "raw"
-INPUT_COLLECTION_PREFIX = "split_"
-INPUT_COLLECTION_SUFFIX = "_input"  # Read from transformation output
+# Collection naming (from central config)
+INPUT_COLLECTION_PREFIX = SPLIT_COLLECTION_PREFIX
+INPUT_COLLECTION_SUFFIX = SPLIT_COLLECTION_SUFFIX_INPUT  # Read from transformation output
 
-OUTPUT_COLLECTION_PREFIX = "split_"
-OUTPUT_COLLECTION_SUFFIX = "_output"  # Write for next stage (cyclic pattern)
+OUTPUT_COLLECTION_PREFIX = SPLIT_COLLECTION_PREFIX
+OUTPUT_COLLECTION_SUFFIX = SPLIT_COLLECTION_SUFFIX_OUTPUT  # Write for next stage (cyclic pattern)
 
 # Path to half-life selection results (relative to repository root)
 HALFLIFE_RESULTS_PATH = Path(REPO_ROOT) / "artifacts" / "ewma_halflife_selection" / "aggregation" / "final_halflifes.json"
 
-CLIP_STD = 3.0
+# Standardization parameters (from central config)
+CLIP_STD = STANDARDIZATION_CONFIG['clip_std']
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
-DRIVER_MEMORY = "4g"
+# Spark configuration (from central config)
+JAR_FILES_PATH = SPARK_JAR_PATH
+DRIVER_MEMORY = SPARK_DRIVER_MEMORY_DEFAULT
 
 # =================================================================================================
 # Main Execution

@@ -32,11 +32,17 @@ from src.split_materialization.per_split_cyclic_manager import PerSplitCyclicMan
 # Import direct transformation approach (simpler than UDFs)
 from src.feature_transformation.transformation_application import apply_transformations_direct
 
+# Import centralized configuration
+from src.config import (
+    DB_NAME,
+    MONGO_URI,
+    SPARK_JAR_PATH,
+    SPARK_DRIVER_MEMORY_DEFAULT,
+)
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
-
-DB_NAME = "raw"
 
 # Input/Output collections (simplified pattern)
 INPUT_COLLECTION_TEMPLATE = "split_{}_input"
@@ -50,10 +56,9 @@ ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "feature_transformation"
 MLFLOW_TRACKING_URI = "mlruns/"
 MLFLOW_EXPERIMENT_NAME = "Feature_Transformation"
 
-# Spark configuration
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
-DRIVER_MEMORY = "4g"
+# Spark configuration (from central config)
+JAR_FILES_PATH = SPARK_JAR_PATH
+DRIVER_MEMORY = SPARK_DRIVER_MEMORY_DEFAULT
 
 # Processing configuration
 FORCE_OVERWRITE = True  # Overwrite existing split_X_working collections

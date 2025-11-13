@@ -18,32 +18,30 @@ from src.utils import (
 # Import feature engineering classes
 from src.hand_crafted_features import FeatureOrchestrator
 
+# Import centralized configuration
+from src.config import (
+    MONGO_URI,
+    DB_NAME,
+    SPARK_JAR_PATH,
+    CYCLIC_INPUT_COLLECTION,
+    CYCLIC_OUTPUT_COLLECTION,
+    FEATURE_DERIVATION_CONFIG,
+)
+from src.config.feature_engineering_config import FEATURE_DERIVATION_SPARK_CONFIGS
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-DB_NAME = "raw"
-INPUT_COLLECTION = "input"
-OUTPUT_COLLECTION = "output"
+# Collection names (from central config)
+INPUT_COLLECTION = CYCLIC_INPUT_COLLECTION
+OUTPUT_COLLECTION = CYCLIC_OUTPUT_COLLECTION
 
-CONFIG = {
-    'forward_horizons': [1],  # Immediate 1-step ahead only
-    'historical_lags': [1, 2, 3, 5, 10, 20],  # Cut at 20 (white noise after)
-    'variance_half_life': 20,
-    'depth_bands': [5, 50],  # top_5 and top_50 only
-    'decision_lag': 0,
-    'required_past_hours': 3,
-    'required_future_hours': 1,  # Only need 1 step ahead now
-}
+# Feature derivation configuration (from central config)
+CONFIG = FEATURE_DERIVATION_CONFIG
 
-ADDITIONAL_SPARK_CONFIGS = {
-    "spark.network.timeout": "300s",
-    "spark.executor.heartbeatInterval": "60s",
-    "spark.mongodb.connection.timeout.ms": "30000",
-    "spark.mongodb.socket.timeout.ms": "120000",
-    "spark.mongodb.write.retryWrites": "true"
-}
+# Additional Spark configurations (from central config)
+ADDITIONAL_SPARK_CONFIGS = FEATURE_DERIVATION_SPARK_CONFIGS
 
 # =================================================================================================
 # Main Execution
@@ -74,7 +72,7 @@ def main():
         db_name=DB_NAME,
         mongo_uri=MONGO_URI,
         driver_memory="8g",
-        jar_files_path="file:///C:/Users/llucp/spark_jars/",
+        jar_files_path=SPARK_JAR_PATH,
         additional_configs=ADDITIONAL_SPARK_CONFIGS
     )
     

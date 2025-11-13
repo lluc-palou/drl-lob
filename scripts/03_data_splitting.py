@@ -28,41 +28,25 @@ from src.validation import (
 # Import representative windows extractor
 from src.stylized_facts import RepresentativeWindowsExtractor
 
+# Import centralized configuration
+from src.config import (
+    MONGO_URI,
+    DB_NAME,
+    CYCLIC_INPUT_COLLECTION,
+    CYCLIC_OUTPUT_COLLECTION,
+    get_data_splitting_config,
+)
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-DB_NAME = "raw"
-INPUT_COLLECTION = "input"
-OUTPUT_COLLECTION = "output"
+# Collection names (from central config)
+INPUT_COLLECTION = CYCLIC_INPUT_COLLECTION
+OUTPUT_COLLECTION = CYCLIC_OUTPUT_COLLECTION
 
-CONFIG = {
-    'experiment_id': None,
-    'master_seed': 42,
-    
-    'temporal_params': {
-        'sampling_interval_seconds': 30,
-        'context_length_samples': 240,
-        'forecast_horizon_steps': 240,
-        'purge_length_samples': 240,
-        'embargo_length_samples': 240,
-    },
-    
-    'train_test_split': {
-        'test_ratio': 0.20,
-    },
-    
-    'cpcv': {
-        'n_folds': 10,
-        'k_validation_folds': 2,
-    },
-    
-    'stylized_facts': {
-        'window_length_samples': 60,
-        'edge_margin_samples': 25,
-    }
-}
+# Get complete data splitting configuration from central config
+CONFIG = get_data_splitting_config()
 
 # Create Spark session
 spark = create_spark_session(

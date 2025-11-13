@@ -35,20 +35,31 @@ from pyspark.sql.types import BooleanType
 from src.utils.logging import logger, log_section
 from src.utils.spark import create_spark_session
 
+# Import centralized configuration
+from src.config import (
+    DB_NAME,
+    MONGO_URI,
+    SPARK_JAR_PATH,
+    SPARK_DRIVER_MEMORY_DEFAULT,
+    SPLIT_COLLECTION_PREFIX,
+    SPLIT_COLLECTION_SUFFIX_INPUT,
+    SPLIT_COLLECTION_SUFFIX_OUTPUT,
+)
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-DB_NAME = "raw"
-COLLECTION_PREFIX = "split_"
-COLLECTION_SUFFIX = "_input"  # Read/write to same collections (after Stage 11 cyclic swap)
+# Collection naming (from central config)
+COLLECTION_PREFIX = SPLIT_COLLECTION_PREFIX
+COLLECTION_SUFFIX = SPLIT_COLLECTION_SUFFIX_INPUT  # Read/write to same collections (after Stage 11 cyclic swap)
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
-DRIVER_MEMORY = "4g"
+# Spark configuration (from central config)
+JAR_FILES_PATH = SPARK_JAR_PATH
+DRIVER_MEMORY = SPARK_DRIVER_MEMORY_DEFAULT
 
 # Temporary collection suffix for safe overwrite
-TEMP_SUFFIX = "_output"
+TEMP_SUFFIX = SPLIT_COLLECTION_SUFFIX_OUTPUT
 
 # =================================================================================================
 # Utility Functions

@@ -14,40 +14,29 @@ from src.utils.logging import logger, log_section
 # Import standardization classes
 from src.lob_standardization import StandardizationOrchestrator
 
+# Import centralized configuration
+from src.config import (
+    MONGO_URI,
+    DB_NAME,
+    CYCLIC_INPUT_COLLECTION,
+    CYCLIC_OUTPUT_COLLECTION,
+    LOB_STANDARDIZATION_CONFIG,
+)
+from src.config.lob_standardization_config import LOB_STANDARDIZATION_SPARK_CONFIGS
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-DB_NAME = "raw"
-INPUT_COLLECTION = "input"  # Input from feature engineering stage
-OUTPUT_COLLECTION = "output"
+# Collection names (from central config)
+INPUT_COLLECTION = CYCLIC_INPUT_COLLECTION  # Input from feature engineering stage
+OUTPUT_COLLECTION = CYCLIC_OUTPUT_COLLECTION
 
-CONFIG = {
-    # Quantization parameters
-    'B': 1000,                      # Number of bins (output will be B+1 bins)
-    'delta': 1000.0,               # Price clipping threshold (std deviations)
-    'epsilon': 1.0,                # Minimum price spacing near zero
-    
-    # Standardization parameters
-    'eps': 1e-8,                   # Small constant to avoid division by zero
-    'min_denom': 1e-6,             # Minimum denominator value
-    
-    # Batch processing
-    'required_past_hours': 2,      # Hours of past context for volatility
-    
-    # Pipeline mode
-    'volume_coverage_analysis': False,  # Set to True for coverage analysis
-}
+# LOB standardization configuration (from central config)
+CONFIG = LOB_STANDARDIZATION_CONFIG
 
-# Additional Spark configurations
-ADDITIONAL_SPARK_CONFIGS = {
-    "spark.network.timeout": "300s",
-    "spark.executor.heartbeatInterval": "60s",
-    "spark.mongodb.connection.timeout.ms": "30000",
-    "spark.mongodb.socket.timeout.ms": "120000",
-    "spark.mongodb.write.retryWrites": "true",
-}
+# Additional Spark configurations (from central config)
+ADDITIONAL_SPARK_CONFIGS = LOB_STANDARDIZATION_SPARK_CONFIGS
 
 # Create Spark session
 spark = create_spark_session(
