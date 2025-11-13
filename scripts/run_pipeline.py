@@ -77,8 +77,8 @@ STAGES = {
     2: {
         "name": "Data Ingestion",
         "script": "02_data_ingestion.py",
-        "swap_after": False,
-        "description": "Ingest raw LOB data from parquet files, rename: output -> input",
+        "swap_after": True,
+        "description": "Ingest raw LOB data from parquet files to output collection",
         "stage_type": "pipeline"
     },
     3: {
@@ -262,8 +262,8 @@ def run_stage_with_swap(pipeline_mgr: CyclicPipelineManager,
         return False
     
     logger(f"Stage {stage_num} completed successfully in {result['duration']:.2f}s", "INFO")
-    
-    # Swap if needed (only for stages 3-5 with cyclic lob_input/lob_output pattern)
+
+    # Swap if needed (for stages with cyclic input/output pattern)
     if stage_info["swap_after"]:
         log_section(f"Swapping Collections After Stage {stage_num}")
         try:

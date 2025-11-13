@@ -163,34 +163,38 @@ if __name__ == "__main__":
         # Stage 2: Ingest raw LOB data
         ingest_raw_lob_data()
 
-        # Rename collection: output -> input (cyclic pattern for next stage)
-        logger("", level="INFO")
-        logger("Renaming collection for cyclic pattern...", level="INFO")
-
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI)
-        db = client[DB_NAME]
-
-        # Drop old input collection if exists
-        if INPUT_COLLECTION in db.list_collection_names():
-            db[INPUT_COLLECTION].drop()
-            logger(f"  Dropped old {INPUT_COLLECTION}", level="INFO")
-
-        # Rename output -> input
-        if OUTPUT_COLLECTION in db.list_collection_names():
-            db[OUTPUT_COLLECTION].rename(INPUT_COLLECTION)
-            logger(f"  Renamed {OUTPUT_COLLECTION} -> {INPUT_COLLECTION}", level="INFO")
-        else:
-            logger(f"  Warning: {OUTPUT_COLLECTION} collection not found (no data ingested?)", level="WARN")
-
-        client.close()
-
-        logger("", level="INFO")
-        logger("Collection renaming complete", level="INFO")
-        logger(f"Next stage will read from: {INPUT_COLLECTION}", level="INFO")
+        # Collection renaming (output -> input) will be handled by pipeline orchestrator
+        # if swap_after=True is set in run_pipeline.py
 
         end_time = time.time()
         logger(f"STAGE 2 ingestion completed in {end_time - start_time:.2f} seconds.", level="INFO")
+        logger(f"Output collection: {OUTPUT_COLLECTION}", level="INFO")
+
+        if not is_orchestrated:
+            # If running standalone, do the rename manually
+            logger("", level="INFO")
+            logger("Running standalone - performing collection rename...", level="INFO")
+
+            from pymongo import MongoClient
+            client = MongoClient(MONGO_URI)
+            db = client[DB_NAME]
+
+            # Drop old input collection if exists
+            if INPUT_COLLECTION in db.list_collection_names():
+                db[INPUT_COLLECTION].drop()
+                logger(f"  Dropped old {INPUT_COLLECTION}", level="INFO")
+
+            # Rename output -> input
+            if OUTPUT_COLLECTION in db.list_collection_names():
+                db[OUTPUT_COLLECTION].rename(INPUT_COLLECTION)
+                logger(f"  Renamed {OUTPUT_COLLECTION} -> {INPUT_COLLECTION}", level="INFO")
+            else:
+                logger(f"  Warning: {OUTPUT_COLLECTION} collection not found (no data ingested?)", level="WARN")
+
+            client.close()
+            logger(f"Next stage will read from: {INPUT_COLLECTION}", level="INFO")
+        else:
+            logger("Running in orchestrated mode - collection swap will be handled by orchestrator", level="INFO")
 
     finally:
         # Only stop Spark if not orchestrated

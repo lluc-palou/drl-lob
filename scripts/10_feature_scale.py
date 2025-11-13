@@ -84,8 +84,11 @@ INPUT_COLLECTION_SUFFIX = "_input"  # Stage 8 renames its output to _input for n
 MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 MLFLOW_EXPERIMENT_NAME = "Feature_Standardization"
 
+# Hyperparameters
 MAX_SPLITS = 5
-HALF_LIFE_CANDIDATES = [5, 10, 20, 40, 60]
+HALF_LIFE_CANDIDATES = [5, 10, 20, 40, 60]  # EWMA half-life values to test
+TRAIN_SAMPLE_RATE = 0.1  # Sample 10% of training data for fitting (memory efficiency)
+CLIP_STD = 3.0  # Standard deviations for outlier clipping
 
 MONGO_URI = "mongodb://127.0.0.1:27017/"
 JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
@@ -186,7 +189,9 @@ def main():
             spark=spark,
             db_name=DB_NAME,
             input_collection_prefix=INPUT_COLLECTION_PREFIX,
-            input_collection_suffix=INPUT_COLLECTION_SUFFIX
+            input_collection_suffix=INPUT_COLLECTION_SUFFIX,
+            train_sample_rate=TRAIN_SAMPLE_RATE,
+            clip_std=CLIP_STD
         )
         
         # Process each split
@@ -202,8 +207,7 @@ def main():
             all_split_results[split_id] = split_results
 
             # Log to MLflow
-            # Note: processor doesn't expose train_sample_rate, default is 0.1 (10%)
-            log_split_results(split_id, split_results, train_sample_rate=0.1)
+            log_split_results(split_id, split_results, train_sample_rate=TRAIN_SAMPLE_RATE)
         
         # Aggregate results across splits
         logger('', "INFO")
