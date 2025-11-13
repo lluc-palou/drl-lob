@@ -24,39 +24,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, REPO_ROOT)
 
-# =================================================================================================
-# Unicode/MLflow Fix for Windows
-# =================================================================================================
-if sys.platform == 'win32':
-    os.environ['PYTHONIOENCODING'] = 'utf-8:replace'
-    os.environ['PYTHONUTF8'] = '1'
-    
-    if hasattr(sys.stdout, 'reconfigure'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-        except:
-            pass
-
-try:
-    from mlflow.tracking._tracking_service import client as mlflow_client
-    
-    _original_log_url = mlflow_client.TrackingServiceClient._log_url
-    
-    def _patched_log_url(self, run_id):
-        try:
-            run = self.get_run(run_id)
-            run_name = run.info.run_name or run_id
-            run_url = self._get_run_url(run.info.experiment_id, run_id)
-            sys.stdout.write(f"[RUN] View run {run_name} at: {run_url}\n")
-            sys.stdout.flush()
-        except:
-            pass
-    
-    mlflow_client.TrackingServiceClient._log_url = _patched_log_url
-except:
-    pass
-# =================================================================================================
+# Apply Windows UTF-8 fix and MLflow patch
+from src.utils.mlflow_patch import apply_mlflow_patch
+apply_mlflow_patch()
 
 import mlflow
 
@@ -73,22 +43,35 @@ from src.feature_standardization.mlflow_logger import (
     log_aggregated_results
 )
 
+# Import centralized configuration
+from src.config import (
+    DB_NAME,
+    MONGO_URI,
+    SPARK_JAR_PATH,
+    SPARK_DRIVER_MEMORY_DEFAULT,
+    MLFLOW_TRACKING_URI,
+    MLFLOW_EXPERIMENTS,
+    SPLIT_COLLECTION_PREFIX,
+    SPLIT_COLLECTION_SUFFIX_INPUT,
+)
+
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-DB_NAME = "raw"
-INPUT_COLLECTION_PREFIX = "split_"
-INPUT_COLLECTION_SUFFIX = "_input"  # Read from transformation output
+# Collection naming (from central config)
+INPUT_COLLECTION_PREFIX = SPLIT_COLLECTION_PREFIX
+INPUT_COLLECTION_SUFFIX = SPLIT_COLLECTION_SUFFIX_INPUT
 
-MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
-MLFLOW_EXPERIMENT_NAME = "Feature_Standardization"
+# MLflow configuration (from central config)
+MLFLOW_EXPERIMENT_NAME = MLFLOW_EXPERIMENTS['feature_standardization']
 
+# Processing configuration
 HALF_LIFE_CANDIDATES = [5, 10, 20, 40, 60]
 
-MONGO_URI = "mongodb://127.0.0.1:27017/"
-JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
-DRIVER_MEMORY = "4g"
+# Spark configuration (from central config)
+JAR_FILES_PATH = SPARK_JAR_PATH
+DRIVER_MEMORY = SPARK_DRIVER_MEMORY_DEFAULT
 
 # =================================================================================================
 # Feature Filtering

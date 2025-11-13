@@ -26,22 +26,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, REPO_ROOT)
 
-# =================================================================================================
-# CRITICAL: Windows UTF-8 Fix - MUST BE BEFORE OTHER IMPORTS!
-# =================================================================================================
-if sys.platform == 'win32':
-    # Force UTF-8 encoding for all I/O operations
-    os.environ['PYTHONIOENCODING'] = 'utf-8'
-    os.environ['PYTHONUTF8'] = '1'
-    
-    # Reconfigure stdout/stderr to use UTF-8
-    if hasattr(sys.stdout, 'reconfigure'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-        except Exception:
-            pass
-# =================================================================================================
+# Apply Windows UTF-8 fix and MLflow patch
+from src.utils.mlflow_patch import apply_mlflow_patch
+apply_mlflow_patch()
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, array, lit
@@ -50,27 +37,29 @@ from src.utils.logging import logger, log_section
 from src.utils.spark import create_spark_session
 from src.split_materialization import SplitMaterializer
 
+# Import centralized configuration
+from src.config import (
+    DB_NAME,
+    CYCLIC_INPUT_COLLECTION,
+    get_spark_config,
+    SPARK_DRIVER_MEMORY_LARGE
+)
+
 
 # =================================================================================================
 # Configuration
 # =================================================================================================
 
-# MongoDB Configuration
-DB_NAME = "raw"
-INPUT_COLLECTION = "input"  # Output from Stage 5 (LOB standardization)
+# MongoDB Configuration (from central config)
+INPUT_COLLECTION = CYCLIC_INPUT_COLLECTION  # Output from Stage 5 (LOB standardization)
 
 # Split materialization configuration
 CONFIG = {
     "create_test_collection": True,  # Create separate test_data collection
 }
 
-# Spark configuration
-SPARK_CONFIG = {
-    "app_name": "SplitMaterialization",
-    "mongo_uri": "mongodb://127.0.0.1:27017/",
-    "driver_memory": "8g",
-    "jar_files_path": "file:///C:/Users/llucp/spark_jars/",
-}
+# Spark configuration (from central config)
+SPARK_CONFIG = get_spark_config("SplitMaterialization", SPARK_DRIVER_MEMORY_LARGE)
 
 # =================================================================================================
 # Feature Projection Configuration
