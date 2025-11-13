@@ -28,44 +28,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, REPO_ROOT)
 
-# =================================================================================================
-# Unicode/MLflow Fix for Windows - MUST BE FIRST!
-# =================================================================================================
-# Fix Windows console encoding to handle Unicode characters (fixes MLflow emoji errors)
-if sys.platform == 'win32':
-    # Set environment variables for UTF-8 support
-    os.environ['PYTHONIOENCODING'] = 'utf-8:replace'
-    os.environ['PYTHONUTF8'] = '1'
-    
-    # Reconfigure stdout/stderr to use UTF-8 with error replacement
-    if hasattr(sys.stdout, 'reconfigure'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-        except:
-            pass
-
-# Patch MLflow to remove emoji that causes Windows encoding errors
-try:
-    from mlflow.tracking._tracking_service import client as mlflow_client
-    
-    _original_log_url = mlflow_client.TrackingServiceClient._log_url
-    
-    def _patched_log_url(self, run_id):
-        try:
-            run = self.get_run(run_id)
-            run_name = run.info.run_name or run_id
-            run_url = self._get_run_url(run.info.experiment_id, run_id)
-            sys.stdout.write(f"[RUN] View run {run_name} at: {run_url}\n")
-            sys.stdout.flush()
-        except:
-            pass
-    
-    mlflow_client.TrackingServiceClient._log_url = _patched_log_url
-except:
-    pass
-# =================================================================================================
-
+# Apply Windows UTF-8 fix and MLflow patch
+from src.utils.mlflow_patch import apply_mlflow_patch
+apply_mlflow_patch()
 
 # Import utilities
 from src.utils import (
