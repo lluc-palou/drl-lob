@@ -189,14 +189,18 @@ class EWMAStandardizationApplicator:
             
             # Convert back to DataFrame
             transformed_df = self.spark.createDataFrame(transformed_rows, schema=hour_df.schema)
-            
+
             # Drop _id if present
             if '_id' in transformed_df.columns:
                 transformed_df = transformed_df.drop('_id')
-            
+
             # Sort by timestamp
             transformed_df = transformed_df.orderBy("timestamp")
-            
+
+            # CRITICAL FIX: Deduplicate by timestamp to prevent duplicate documents
+            # Hour windows may have edge cases that cause same timestamp to appear twice
+            transformed_df = transformed_df.dropDuplicates(["timestamp"])
+
             # Write with ordered writes
             write_mode = "overwrite" if first_batch else "append"
             

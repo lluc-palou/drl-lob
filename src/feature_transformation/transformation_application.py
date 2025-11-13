@@ -189,6 +189,10 @@ def apply_transformations_direct(
         # Sort by timestamp to ensure ordering
         transformed_df = transformed_df.orderBy("timestamp")
 
+        # CRITICAL FIX: Deduplicate by timestamp to prevent duplicate documents
+        # Hour windows may have edge cases that cause same timestamp to appear twice
+        transformed_df = transformed_df.dropDuplicates(["timestamp"])
+
         # Write with ordered writes to preserve time order
         write_mode = "overwrite" if first_batch else "append"
 
