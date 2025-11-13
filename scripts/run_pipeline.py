@@ -60,10 +60,8 @@ CONFIG = {
     'db_name': "raw",
 
     # Pipeline control
-    'reset': False,        # Reset pipeline to archive state before running
     'start_from': 2,       # Start from stage 2-14
     'stop_at': 14,         # Stop at stage 2-14
-    'skip_init': True,     # Skip initialization check (only if you know pipeline is ready)
 
     # Stylized facts testing
     'enable_stylized_facts': True,  # Enable stylized facts analysis
@@ -305,8 +303,6 @@ def main():
     logger(f"Database: {CONFIG['db_name']}", "INFO")
     logger(f"Stage range: {CONFIG['start_from']} to {CONFIG['stop_at']}", "INFO")
     logger(f"Stages to run: {stages_to_run}", "INFO")
-    logger(f"Reset mode: {CONFIG['reset']}", "INFO")
-    logger(f"Skip init: {CONFIG['skip_init']}", "INFO")
     logger(f"Stylized facts enabled: {CONFIG['enable_stylized_facts']}", "INFO")
     log_section("", char="=")
     
@@ -317,48 +313,18 @@ def main():
             db_name=CONFIG['db_name']
         )
         stage_runner = StageRunner(scripts_dir=SCRIPT_DIR)
-        
-        # Show initial state (only for stages 2-5 that use input/output collections)
-        if 2 <= CONFIG['start_from'] <= 5:
-            log_section("Initial Pipeline State")
-            pipeline_mgr.print_pipeline_state()
 
-        # Reset if requested (only for stages 3-5, stage 2 creates input from scratch)
-        if CONFIG['reset'] and 3 <= CONFIG['start_from'] <= 5:
-            log_section("Resetting Pipeline")
-            logger("Resetting to archive state...", "INFO")
-            pipeline_mgr.reset_to_archive(force=True)
-
-        # Initialize if needed (only for stages 3-5, stage 2 creates input from scratch)
-        if not CONFIG['skip_init'] and not CONFIG['reset'] and 3 <= CONFIG['start_from'] <= 5:
-            log_section("Checking Initialization")
-            state = pipeline_mgr.get_pipeline_state()
-
-            if not state["collections"]["lob_input"]["exists"]:
-                logger("Pipeline not initialized, initializing now...", "INFO")
-                pipeline_mgr.initialize_pipeline(force=False)
-            elif state["collections"]["lob_input"]["count"] == 0:
-                logger("lob_input is empty, re-initializing...", "WARNING")
-                pipeline_mgr.initialize_pipeline(force=True)
-            else:
-                logger("Pipeline already initialized", "INFO")
-        
         # Run stages
         logger(f"Running {len(stages_to_run)} stages: {stages_to_run}", "INFO")
         
         for stage_num in stages_to_run:
             success = run_stage_with_swap(pipeline_mgr, stage_runner, stage_num)
-            
+
             if not success:
                 logger(f"Pipeline stopped at Stage {stage_num} due to failure", "ERROR")
                 stage_runner.print_execution_summary()
                 return 1
-        
-        # Show final state (only for stages 2-5 that use input/output collections)
-        if 2 <= CONFIG['stop_at'] <= 5:
-            log_section("Final Pipeline State")
-            pipeline_mgr.print_pipeline_state()
-        
+
         # Show execution summary
         stage_runner.print_execution_summary()
         
