@@ -7,16 +7,6 @@ Processes data in batches without collecting to driver.
 
 from typing import Dict, List
 from datetime import timedelta
-import math
-import numpy as np
-import pandas as pd
-
-from pyspark.sql.functions import pandas_udf, col
-from pyspark.sql.types import ArrayType, DoubleType
-
-from src.utils.logging import logger
-from src.utils.database import write_to_mongodb
-from src.feature_transformation.data_loader import get_all_hours, load_hour_batch
 
 
 def apply_transformations_direct(
@@ -40,6 +30,14 @@ def apply_transformations_direct(
         final_transforms: Transform type per feature
         fitted_params: Fitted parameters per feature
     """
+    # Import here to avoid module-level imports that leak into UDF serialization
+    import math
+    import numpy as np
+    import pandas as pd
+    from pyspark.sql.functions import pandas_udf, col
+    from pyspark.sql.types import ArrayType, DoubleType
+    from src.utils.logging import logger
+    from src.feature_transformation.data_loader import get_all_hours, load_hour_batch
 
     # Build transformation map (feature_idx -> transform info)
     transform_map = {}
@@ -65,6 +63,7 @@ def apply_transformations_direct(
 
     # Create pandas UDF for vectorized transformation
     # Must be self-contained (no external function calls in workers)
+    # Import standard libraries inside UDF to ensure they're available in workers
     @pandas_udf(ArrayType(DoubleType()))
     def transform_features_udf(features_series: pd.Series) -> pd.Series:
         """
