@@ -1,3 +1,19 @@
+"""
+DEPRECATED: This script is no longer used.
+
+The pipeline now starts from Stage 2 (data ingestion from parquet files),
+not from a raw_lob archive collection.
+
+To initialize the pipeline:
+1. Run Stage 2: python scripts/02_data_ingestion.py
+2. This will load data from parquet files and create the 'output' collection
+3. Stage 2 will automatically swap output -> input
+4. Continue with Stage 3 and onwards via run_pipeline.py
+
+This script and the initialize_pipeline() method have been removed as they
+relied on the obsolete raw_lob archive collection pattern.
+"""
+
 import os
 import sys
 from datetime import datetime
@@ -8,7 +24,6 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, REPO_ROOT)
 
 from src.utils.logging import logger, log_section
-from src.pipeline import CyclicPipelineManager
 
 # =================================================================================================
 # Configuration - Edit these settings
@@ -25,49 +40,20 @@ CONFIG = {
 # =================================================================================================
 
 def main():
-    """Main initialization function."""
-    start_time = datetime.now()
-    
-    log_section("Pipeline Initialization")
-    logger(f"MongoDB URI: {CONFIG['mongo_uri']}", "INFO")
-    logger(f"Database: {CONFIG['db_name']}", "INFO")
-    logger(f"Force mode: {CONFIG['force']}", "INFO")
-    log_section("", char="-")
-    
-    try:
-        # Create pipeline manager
-        manager = CyclicPipelineManager(
-            mongo_uri=CONFIG['mongo_uri'],
-            db_name=CONFIG['db_name']
-        )
-        
-        # Show current state
-        logger("Current pipeline state:", "INFO")
-        manager.print_pipeline_state()
-        
-        # Initialize pipeline
-        logger("Initializing pipeline...", "INFO")
-        manager.initialize_pipeline(force=CONFIG['force'])
-        
-        # Show final state
-        logger("Pipeline initialized successfully!", "INFO")
-        manager.print_pipeline_state()
-        
-        # Calculate duration
-        duration = (datetime.now() - start_time).total_seconds()
-        
-        log_section("Initialization Complete")
-        logger(f"Total time: {duration:.2f} seconds", "INFO")
-        logger("Pipeline is ready for Stage 3 (Data Splitting)", "INFO")
-        log_section("", char="=")
-        
-        return 0
-        
-    except Exception as e:
-        logger(f"Initialization failed: {str(e)}", "ERROR")
-        import traceback
-        traceback.print_exc()
-        return 1
+    """Main function - prints deprecation message."""
+    log_section("DEPRECATED SCRIPT")
+    logger("This script (pipeline_init.py) is no longer used.", "WARNING")
+    logger("", "INFO")
+    logger("The pipeline now starts from Stage 2 (data ingestion from parquet files),", "INFO")
+    logger("not from a raw_lob archive collection.", "INFO")
+    logger("", "INFO")
+    logger("To initialize and run the pipeline:", "INFO")
+    logger("  1. python scripts/02_data_ingestion.py", "INFO")
+    logger("  2. python scripts/run_pipeline.py", "INFO")
+    logger("", "INFO")
+    logger("Or use run_pipeline.py with start_from=2 to run both automatically.", "INFO")
+    log_section("", char="=")
+    return 1
 
 
 if __name__ == "__main__":
