@@ -58,13 +58,13 @@ CONFIG = {
     # MongoDB settings
     'mongo_uri': "mongodb://127.0.0.1:27017/",
     'db_name': "raw",
-    
+
     # Pipeline control
     'reset': False,        # Reset pipeline to archive state before running
-    'start_from': 8,       # Start from stage 3-13
-    'stop_at': 8,         # Stop at stage 3-13
+    'start_from': 2,       # Start from stage 2-14
+    'stop_at': 14,         # Stop at stage 2-14
     'skip_init': True,     # Skip initialization check (only if you know pipeline is ready)
-    
+
     # Stylized facts testing
     'enable_stylized_facts': True,  # Enable stylized facts analysis
 }
@@ -74,6 +74,13 @@ CONFIG = {
 # =================================================================================================
 
 STAGES = {
+    2: {
+        "name": "Data Ingestion",
+        "script": "02_data_ingestion.py",
+        "swap_after": False,
+        "description": "Ingest raw LOB data from parquet files, rename: output -> input",
+        "stage_type": "pipeline"
+    },
     3: {
         "name": "Data Splitting",
         "script": "03_data_splitting.py",
@@ -220,8 +227,10 @@ def run_stage_with_swap(pipeline_mgr: CyclicPipelineManager,
         deps = stage_info["depends_on"]
         logger(f"Dependencies: {deps}", "DEBUG")
     
-    # Validate prerequisites (skip for stages 6+ as they work with split collections)
-    if stage_num <= 5:
+    # Validate prerequisites (skip for stage 2 and stages 6+ as they work differently)
+    # Stage 2: reads from files, not collections
+    # Stages 6+: work with split collections
+    if 3 <= stage_num <= 5:
         try:
             pipeline_mgr.validate_can_run_stage(stage_num)
         except ValueError as e:
@@ -280,8 +289,8 @@ def main():
         logger("Error: start_from must be <= stop_at", "ERROR")
         return 1
     
-    if not (3 <= CONFIG['start_from'] <= 14 and 3 <= CONFIG['stop_at'] <= 14):
-        logger("Error: stages must be between 3 and 14", "ERROR")
+    if not (2 <= CONFIG['start_from'] <= 14 and 2 <= CONFIG['stop_at'] <= 14):
+        logger("Error: stages must be between 2 and 14", "ERROR")
         return 1
     
     # Check if requested stages exist
@@ -309,22 +318,22 @@ def main():
         )
         stage_runner = StageRunner(scripts_dir=SCRIPT_DIR)
         
-        # Show initial state (only for stages 3-5)
-        if CONFIG['start_from'] <= 5:
+        # Show initial state (only for stages 2-5 that use input/output collections)
+        if 2 <= CONFIG['start_from'] <= 5:
             log_section("Initial Pipeline State")
             pipeline_mgr.print_pipeline_state()
-        
-        # Reset if requested
-        if CONFIG['reset'] and CONFIG['start_from'] <= 5:
+
+        # Reset if requested (only for stages 3-5, stage 2 creates input from scratch)
+        if CONFIG['reset'] and 3 <= CONFIG['start_from'] <= 5:
             log_section("Resetting Pipeline")
             logger("Resetting to archive state...", "INFO")
             pipeline_mgr.reset_to_archive(force=True)
-        
-        # Initialize if needed
-        if not CONFIG['skip_init'] and not CONFIG['reset'] and CONFIG['start_from'] <= 5:
+
+        # Initialize if needed (only for stages 3-5, stage 2 creates input from scratch)
+        if not CONFIG['skip_init'] and not CONFIG['reset'] and 3 <= CONFIG['start_from'] <= 5:
             log_section("Checking Initialization")
             state = pipeline_mgr.get_pipeline_state()
-            
+
             if not state["collections"]["lob_input"]["exists"]:
                 logger("Pipeline not initialized, initializing now...", "INFO")
                 pipeline_mgr.initialize_pipeline(force=False)
@@ -345,8 +354,8 @@ def main():
                 stage_runner.print_execution_summary()
                 return 1
         
-        # Show final state (only for stages 3-5)
-        if CONFIG['stop_at'] <= 5:
+        # Show final state (only for stages 2-5 that use input/output collections)
+        if 2 <= CONFIG['stop_at'] <= 5:
             log_section("Final Pipeline State")
             pipeline_mgr.print_pipeline_state()
         
