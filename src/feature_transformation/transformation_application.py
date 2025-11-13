@@ -161,12 +161,9 @@ def apply_transformations_direct(
 
     logger(f"Processing {len(hours)} hours of data", "INFO")
 
-    # Process hour by hour in smaller batches to avoid executor memory issues
+    # Process hour by hour
     total_processed = 0
     first_batch = True
-
-    # Batch size for processing (rows per batch to avoid memory issues)
-    BATCH_SIZE = 10000  # Process 10k rows at a time
 
     for hour_idx, start_hour in enumerate(hours):
         end_hour = start_hour + timedelta(hours=1)
@@ -180,54 +177,30 @@ def apply_transformations_direct(
 
         logger(f"Hour {hour_idx + 1}/{len(hours)}: {start_hour.strftime('%Y-%m-%d %H:00')} - {hour_count:,} samples", "INFO")
 
-        # Process in smaller batches to avoid connection resets
-        num_batches = (hour_count + BATCH_SIZE - 1) // BATCH_SIZE
-        if num_batches > 1:
-            logger(f"  Processing in {num_batches} batches of ~{BATCH_SIZE:,} rows", "INFO")
+        # Apply transformations using pandas UDF (distributed, vectorized)
+        transformed_df = hour_df.withColumn('features', transform_features_udf(col('features')))
 
-        # Add row number for batching
-        from pyspark.sql.functions import monotonically_increasing_id
-        hour_df = hour_df.withColumn("_batch_id", (monotonically_increasing_id() / BATCH_SIZE).cast("int"))
+        # Drop _id if present (MongoDB internal field)
+        if '_id' in transformed_df.columns:
+            transformed_df = transformed_df.drop('_id')
 
-        for batch_id in range(num_batches):
-            # Filter to current batch
-            batch_df = hour_df.filter(col("_batch_id") == batch_id)
-            batch_count = batch_df.count()
+        # Sort by timestamp to ensure ordering
+        transformed_df = transformed_df.orderBy("timestamp")
 
-            if batch_count == 0:
-                continue
+        # Write with ordered writes to preserve time order
+        write_mode = "overwrite" if first_batch else "append"
 
-            if num_batches > 1:
-                logger(f"    Batch {batch_id + 1}/{num_batches}: {batch_count:,} rows", "INFO")
+        (transformed_df.write.format("mongodb")
+         .option("database", db_name)
+         .option("collection", output_collection)
+         .option("ordered", "true")
+         .mode(write_mode)
+         .save())
 
-            # Apply transformations using pandas UDF (distributed, vectorized)
-            transformed_df = batch_df.withColumn('features', transform_features_udf(col('features')))
+        total_processed += hour_count
+        first_batch = False
 
-            # Drop temporary columns
-            transformed_df = transformed_df.drop('_batch_id')
-            if '_id' in transformed_df.columns:
-                transformed_df = transformed_df.drop('_id')
-
-            # Sort by timestamp to ensure ordering
-            transformed_df = transformed_df.orderBy("timestamp")
-
-            # Write with ordered writes to preserve time order
-            write_mode = "overwrite" if first_batch else "append"
-
-            (transformed_df.write.format("mongodb")
-             .option("database", db_name)
-             .option("collection", output_collection)
-             .option("ordered", "true")
-             .mode(write_mode)
-             .save())
-
-            total_processed += batch_count
-            first_batch = False
-
-            if num_batches > 1:
-                logger(f"    Batch {batch_id + 1}/{num_batches} written: {batch_count:,} samples", "INFO")
-
-        logger(f"  Hour {hour_idx + 1} completed: {hour_count:,} samples processed", "INFO")
+        logger(f"  Transformed and wrote {hour_count:,} samples in time order", "INFO")
 
     logger("=" * 80, "INFO")
     logger(f"Successfully processed {total_processed:,} documents", "INFO")
