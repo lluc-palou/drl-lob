@@ -84,7 +84,6 @@ INPUT_COLLECTION_SUFFIX = "_input"  # Split collections are named split_X_input
 MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 MLFLOW_EXPERIMENT_NAME = "Feature_Transformation"
 
-MAX_SPLITS = 1
 TRAIN_SAMPLE_RATE = 1.0
 
 MONGO_URI = "mongodb://127.0.0.1:27017/"
@@ -178,8 +177,33 @@ def main():
         
         # Filter to transformable features only
         feature_names = filter_transformable_features(all_feature_names)
-        logger(f'Processing {len(feature_names)} transformable features across {MAX_SPLITS} splits', "INFO")
-        
+
+        # Discover splits from MongoDB
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI)
+        db = client[DB_NAME]
+        all_collections = db.list_collection_names()
+
+        split_ids = []
+        for coll_name in all_collections:
+            if coll_name.startswith("split_") and coll_name.endswith("_input"):
+                split_id_str = coll_name.replace("split_", "").replace("_input", "")
+                try:
+                    split_id = int(split_id_str)
+                    split_ids.append(split_id)
+                except ValueError:
+                    pass
+
+        split_ids = sorted(split_ids)
+        logger(f'Discovered {len(split_ids)} splits: {split_ids}', "INFO")
+        client.close()
+
+        if not split_ids:
+            logger("ERROR: No split_X_input collections found!", "ERROR")
+            return
+
+        logger(f'Processing {len(feature_names)} transformable features across {len(split_ids)} splits', "INFO")
+
         # Initialize processor
         processor = FeatureTransformProcessor(
             spark=spark,
@@ -192,7 +216,7 @@ def main():
         # Process each split
         all_split_results = {}
 
-        for split_id in range(MAX_SPLITS):
+        for split_id in split_ids:
             # Process split - pass both filtered and full feature lists
             split_results = processor.process_split(
                 split_id=split_id,

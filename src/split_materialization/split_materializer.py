@@ -15,13 +15,12 @@ class SplitMaterializer:
                  config: dict):
         """
         Initialize split materializer.
-        
+
         Args:
             spark: SparkSession instance
             db_name: Database name
             input_collection: Input collection name (from standardization stage)
             config: Configuration dictionary with:
-                - max_splits: Maximum number of splits to materialize (None for all)
                 - create_test_collection: Whether to create test_data collection
         """
         self.spark = spark
@@ -60,15 +59,9 @@ class SplitMaterializer:
         # Get split IDs from split_roles struct field names
         split_roles_schema = sample_df.schema["split_roles"].dataType
         split_ids = sorted([int(field.name) for field in split_roles_schema.fields])
-        
+
         logger(f'Found {len(split_ids)} splits: {split_ids}', "INFO")
-        
-        # Apply max_splits limit
-        max_splits = self.config.get('max_splits')
-        if max_splits is not None:
-            split_ids = split_ids[:max_splits]
-            logger(f'Limiting to first {max_splits} splits: {split_ids}', "INFO")
-        
+
         self.split_ids = split_ids
     
     def discover_hours(self):

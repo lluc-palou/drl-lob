@@ -56,7 +56,6 @@ JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
 DRIVER_MEMORY = "4g"
 
 # Processing configuration
-MAX_SPLITS = None  # None = all splits, or set to limit
 FORCE_OVERWRITE = True  # Overwrite existing split_X_working collections
 
 # =================================================================================================
@@ -242,12 +241,7 @@ def main():
             return 1
         
         logger(f"Found {len(split_ids)} splits: {split_ids}", "INFO")
-        
-        # Apply max splits limit
-        if MAX_SPLITS is not None:
-            split_ids = split_ids[:MAX_SPLITS]
-            logger(f"Processing first {MAX_SPLITS} splits", "INFO")
-        
+
         # Show initial state
         logger("", "INFO")
         manager.print_all_splits_state()

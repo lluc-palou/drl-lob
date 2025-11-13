@@ -52,6 +52,27 @@ from src.split_materialization import SplitMaterializer
 
 
 # =================================================================================================
+# Configuration
+# =================================================================================================
+
+# MongoDB Configuration
+DB_NAME = "raw"
+INPUT_COLLECTION = "input"  # Output from Stage 5 (LOB standardization)
+
+# Split materialization configuration
+CONFIG = {
+    "create_test_collection": True,  # Create separate test_data collection
+}
+
+# Spark configuration
+SPARK_CONFIG = {
+    "app_name": "SplitMaterialization",
+    "mongo_uri": "mongodb://127.0.0.1:27017/",
+    "driver_memory": "8g",
+    "jar_files_path": "file:///C:/Users/llucp/spark_jars/",
+}
+
+# =================================================================================================
 # Feature Projection Configuration
 # =================================================================================================
 
@@ -150,37 +171,15 @@ def apply_feature_projection(df, projected_features):
 
 def main():
     """Main execution function."""
-    
-    # =====================================================================
-    # CONFIGURATION
-    # =====================================================================
-    
-    DB_NAME = "raw"
-    INPUT_COLLECTION = "input"  # Output from Stage 5 (LOB standardization)
-    
-    # Split materialization configuration
-    CONFIG = {
-        "max_splits": 1,  # Materialize only first N splits (None for all)
-        "create_test_collection": True,  # Create separate test_data collection
-    }
-    
-    # Spark configuration
-    SPARK_CONFIG = {
-        "app_name": "SplitMaterialization",
-        "mongo_uri": "mongodb://127.0.0.1:27017/",
-        "driver_memory": "8g",
-        "jar_files_path": "file:///C:/Users/llucp/spark_jars/",
-    }
-    
+
     # =====================================================================
     # INITIALIZATION
     # =====================================================================
-    
+
     log_section('SPLIT MATERIALIZATION WITH FEATURE PROJECTION (STAGE 06)')
-    
+
     logger(f'Database: {DB_NAME}', "INFO")
     logger(f'Input Collection: {INPUT_COLLECTION}', "INFO")
-    logger(f'Max Splits: {CONFIG["max_splits"]}', "INFO")
     logger(f'Create Test Collection: {CONFIG["create_test_collection"]}', "INFO")
     
     # Create Spark session

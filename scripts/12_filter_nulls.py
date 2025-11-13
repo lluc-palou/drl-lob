@@ -43,8 +43,6 @@ DB_NAME = "raw"
 COLLECTION_PREFIX = "split_"
 COLLECTION_SUFFIX = "_input"  # Read/write to same collections (after Stage 11 cyclic swap)
 
-MAX_SPLITS = 5
-
 MONGO_URI = "mongodb://127.0.0.1:27017/"
 JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
 DRIVER_MEMORY = "4g"
@@ -397,11 +395,34 @@ def main():
     """Main execution function."""
     log_section('NULL FILTERING (STAGE 11.5)')
     logger('', "INFO")
-    
+
+    # Discover splits from MongoDB
+    from pymongo import MongoClient
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    all_collections = db.list_collection_names()
+
+    split_ids = []
+    for coll_name in all_collections:
+        if coll_name.startswith("split_") and coll_name.endswith("_input"):
+            split_id_str = coll_name.replace("split_", "").replace("_input", "")
+            try:
+                split_id = int(split_id_str)
+                split_ids.append(split_id)
+            except ValueError:
+                pass
+
+    split_ids = sorted(split_ids)
+    client.close()
+
+    if not split_ids:
+        logger("ERROR: No split_X_input collections found!", "ERROR")
+        return
+
     logger('This stage removes documents with null/NaN/Inf values from standardized splits', "INFO")
     logger(f'Database: {DB_NAME}', "INFO")
-    logger(f'Collections: {COLLECTION_PREFIX}{{0-{MAX_SPLITS-1}}}{COLLECTION_SUFFIX}', "INFO")
-    logger(f'Processing {MAX_SPLITS} splits', "INFO")
+    logger(f'Collections: {COLLECTION_PREFIX}{{split_ids}}{COLLECTION_SUFFIX}', "INFO")
+    logger(f'Processing {len(split_ids)} splits: {split_ids}', "INFO")
     logger('', "INFO")
     
     logger('Processing strategy:', "INFO")
@@ -427,8 +448,8 @@ def main():
     try:
         # Process each split
         split_results = []
-        
-        for split_id in range(MAX_SPLITS):
+
+        for split_id in split_ids:
             result = filter_split_nulls_hourly(
                 spark,
                 DB_NAME,
