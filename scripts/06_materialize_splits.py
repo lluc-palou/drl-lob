@@ -169,7 +169,7 @@ def main():
         "app_name": "SplitMaterialization",
         "mongo_uri": "mongodb://127.0.0.1:27017/",
         "driver_memory": "8g",
-        "jar_files_path": "file:///C:/Users/llucp/spark_jars/",
+        "jar_files_path": "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/",
     }
     
     # =====================================================================

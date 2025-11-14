@@ -46,7 +46,7 @@ COLLECTION_SUFFIX = "_input"  # Read/write to same collections (after Stage 11 c
 MAX_SPLITS = 5
 
 MONGO_URI = "mongodb://127.0.0.1:27017/"
-JAR_FILES_PATH = "file:///C:/Users/llucp/spark_jars/"
+JAR_FILES_PATH = "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/"
 DRIVER_MEMORY = "4g"
 
 # Temporary collection suffix for safe overwrite
