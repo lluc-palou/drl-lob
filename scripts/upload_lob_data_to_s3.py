@@ -74,6 +74,7 @@ LOCAL_CONFIG = {
 SPARK_CONFIG = {
     "app_name": "UploadLobDataToS3",
     "driver_memory": "4g",
+    "jar_files_path": "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/",
 }
 
 # =================================================================================================
@@ -272,20 +273,19 @@ def upload_manifest_to_s3(spark: SparkSession, manifest: Dict[str, Any], s3_mani
     logger('Manifest uploaded successfully', "INFO")
 
 
-def create_spark_session_for_s3(app_name: str, driver_memory: str) -> SparkSession:
+def create_spark_session_for_s3(app_name: str, driver_memory: str, jar_files_path: str) -> SparkSession:
     """
     Create Spark session configured for S3 access with optimized settings for large files.
 
     Args:
         app_name: Name of the Spark application
         driver_memory: Driver memory allocation
+        jar_files_path: Path to JAR files
 
     Returns:
         Configured Spark session
     """
-    from src.utils.s3_config import get_spark_jars_path, configure_spark_for_s3
-
-    jar_files_path = get_spark_jars_path()
+    from src.utils.s3_config import configure_spark_for_s3
 
     # JAR files needed for S3 access
     aws_jars = [
@@ -344,7 +344,8 @@ def main():
     logger('Initializing Spark with S3 support...', "INFO")
     spark = create_spark_session_for_s3(
         app_name=SPARK_CONFIG["app_name"],
-        driver_memory=SPARK_CONFIG["driver_memory"]
+        driver_memory=SPARK_CONFIG["driver_memory"],
+        jar_files_path=SPARK_CONFIG["jar_files_path"]
     )
     logger('Spark session created with optimized S3 configuration', "INFO")
     logger('', "INFO")

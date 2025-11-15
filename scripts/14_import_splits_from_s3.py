@@ -78,6 +78,7 @@ MONGO_CONFIG = {
 SPARK_CONFIG = {
     "app_name": "ImportSplitsFromS3",
     "driver_memory": "8g",
+    "jar_files_path": "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/",
 }
 
 # =================================================================================================
@@ -325,14 +326,14 @@ def main():
     # Create Spark session with S3 support
     logger('Initializing Spark with S3 support...', "INFO")
 
-    from src.utils.s3_config import configure_spark_for_s3, get_spark_jars_path
+    from src.utils.s3_config import configure_spark_for_s3
 
     spark = create_spark_session(
         app_name=SPARK_CONFIG["app_name"],
         mongo_uri=MONGO_CONFIG["uri"],
         db_name=MONGO_CONFIG["db_name"],
         driver_memory=SPARK_CONFIG["driver_memory"],
-        jar_files_path=get_spark_jars_path()
+        jar_files_path=SPARK_CONFIG["jar_files_path"]
     )
 
     # Configure S3 with optimized settings for large files (multipart, timeouts, retries)

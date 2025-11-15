@@ -6,8 +6,6 @@ This module provides optimized S3 configurations for handling large data volumes
 multipart upload/download settings.
 """
 
-import os
-import platform
 from typing import Dict, Any
 from pyspark.sql import SparkSession
 import boto3
@@ -124,21 +122,6 @@ def configure_spark_for_s3(
     # Set all configuration parameters
     for key, value in config.items():
         hadoop_conf.set(key, str(value))
-
-
-def get_spark_jars_path() -> str:
-    """
-    Get platform-appropriate Spark JARs path.
-
-    Returns:
-        Path to Spark JARs directory
-    """
-    if platform.system() == "Windows":
-        return "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/"
-    else:
-        # Use SPARK_HOME environment variable on Linux
-        spark_home = os.environ.get("SPARK_HOME", "/opt/spark")
-        return f"file://{spark_home}/jars/"
 
 
 # =================================================================================================
