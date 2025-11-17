@@ -215,12 +215,11 @@ def run_stylized_facts_pipeline(output_dir: Path = None):
     # Use provided output_dir or default
     OUTPUT_DIR = output_dir if output_dir is not None else DEFAULT_OUTPUT_DIR
     
-    # Create Spark session
+    # Create Spark session (uses default 8GB driver memory)
     spark = create_spark_session(
         app_name="StylizedFactsTesting",
         mongo_uri=MONGO_URI,
-        db_name=DB_NAME,
-        driver_memory="4g"
+        db_name=DB_NAME
     )
     
     try:
