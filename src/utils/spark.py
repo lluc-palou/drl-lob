@@ -7,7 +7,7 @@ def create_spark_session(
     app_name: str,
     db_name: str,
     mongo_uri: str = "mongodb://127.0.0.1:27017/",
-    driver_memory: str = "6g",  # Maximum 8GB total RAM (6GB driver + 1.5GB executor)
+    driver_memory: str = "8g",  # Optimized for 16GB server (8GB driver + 3GB executor + 4GB MongoDB + 1GB OS)
     jar_files_path: str = "file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/",
     additional_configs: Optional[Dict[str, Any]] = None
 ) -> SparkSession:
@@ -15,10 +15,11 @@ def create_spark_session(
     Given an app name and a database name creates a Spark session with MongoDB connector
     and standard configuration settings.
 
-    Optimized for systems with 8GB RAM maximum.
+    Optimized for 16GB server running both Spark and MongoDB.
+    Memory allocation: 8GB driver + 3GB executor + 4GB MongoDB + 1GB OS/overhead
     """
-    # Set environment variables to control Python socket timeouts
-    # These affect the Python workers that execute UDFs
+    # Set Python environment variables to control socket timeouts
+    # These affect Python workers executing UDFs and prevent Python-level socket timeouts
     os.environ.setdefault('PYSPARK_PYTHON_TIMEOUT', '7200')
     os.environ.setdefault('SPARK_DAEMON_TIMEOUT', '7200')
 
@@ -41,12 +42,13 @@ def create_spark_session(
         .config("spark.mongodb.write.database", db_name)
         .config("spark.mongodb.write.ordered", "false")
         .config("spark.mongodb.write.writeConcern.w", "1")
-        # Memory configurations (optimized for 8GB RAM maximum)
-        .config("spark.driver.memory", driver_memory)  # 6GB driver memory
-        .config("spark.executor.memory", "1536m")  # 1.5GB executor memory
-        .config("spark.driver.maxResultSize", "1536m")  # Max result size before spilling
+        # Memory configurations (optimized for 16GB server with MongoDB)
+        .config("spark.driver.memory", driver_memory)  # 8GB driver memory
+        .config("spark.executor.memory", "3072m")  # 3GB executor memory
+        .config("spark.driver.maxResultSize", "2g")  # Max result size before spilling
         .config("spark.memory.fraction", "0.8")  # 80% of heap for execution/storage
         .config("spark.memory.storageFraction", "0.3")  # 30% of memory.fraction for caching
+        .config("spark.executor.pyspark.memory", "3072m")  # Match executor memory
         # Performance configurations
         .config("spark.sql.execution.arrow.pyspark.enabled", "false")
         .config("spark.sql.adaptive.enabled", "true")
@@ -64,8 +66,6 @@ def create_spark_session(
         .config("spark.rpc.askTimeout", "7200s")  # 2 hours for RPC calls
         .config("spark.rpc.lookupTimeout", "7200s")  # 2 hours for RPC lookups
         .config("spark.core.connection.ack.wait.timeout", "7200s")  # Connection timeout
-        # Python daemon socket timeout (controls Python-side socket timeout)
-        .config("spark.executor.pyspark.memory", "1536m")  # Match executor memory
     )
     
     # Adds any additional configuration settings if provided
