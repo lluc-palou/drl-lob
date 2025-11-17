@@ -1,3 +1,5 @@
+import os
+import sys
 from pyspark.sql import SparkSession
 from typing import Optional, Dict, Any
 
@@ -11,9 +13,17 @@ def create_spark_session(
     additional_configs: Optional[Dict[str, Any]] = None
 ) -> SparkSession:
     """
-    Given an app name and a database name creates a Spark session with MongoDB connector 
+    Given an app name and a database name creates a Spark session with MongoDB connector
     and standard configuration settings.
     """
+    # Fix Windows temp directory permission issues for Spark
+    if sys.platform == 'win32':
+        temp_dir = os.path.join(os.path.expanduser('~'), '.spark_temp')
+        os.makedirs(temp_dir, exist_ok=True)
+        os.environ['TMPDIR'] = temp_dir
+        os.environ['TEMP'] = temp_dir
+        os.environ['TMP'] = temp_dir
+
     # Standard JAR files for MongoDB connector
     jar_files = [
         "mongo-spark-connector_2.12-10.1.1.jar",
