@@ -68,8 +68,7 @@ CONFIG = {
 spark = create_spark_session(
     app_name="CPCV_Split",
     mongo_uri=MONGO_URI,
-    db_name=DB_NAME,
-    driver_memory="4g"
+    db_name=DB_NAME
 )
 
 # =================================================================================================
