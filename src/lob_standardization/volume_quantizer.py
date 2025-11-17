@@ -100,8 +100,10 @@ class VolumeQuantizer:
                             AND pair.volumes IS NOT NULL
                             AND NOT isnan(pair.prices)
                             AND NOT isnan(pair.volumes)
-                            AND NOT isinf(pair.prices)
-                            AND NOT isinf(pair.volumes)
+                            AND pair.prices != double('inf')
+                            AND pair.prices != double('-inf')
+                            AND pair.volumes != double('inf')
+                            AND pair.volumes != double('-inf')
                             AND pair.volumes > 0
                     ),
                     pair -> named_struct(

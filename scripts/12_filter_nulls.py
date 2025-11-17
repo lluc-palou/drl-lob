@@ -237,7 +237,7 @@ def filter_split_nulls_hourly(
         clean_df = hour_df.filter(
             ~expr("""
                 features IS NULL OR
-                exists(features, x -> x IS NULL OR isnan(x) OR isinf(x))
+                exists(features, x -> x IS NULL OR isnan(x) OR x = double('inf') OR x = double('-inf'))
             """)
         )
         clean_count = clean_df.count()

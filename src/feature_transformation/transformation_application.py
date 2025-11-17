@@ -182,7 +182,7 @@ def apply_transformations_direct(
             CASE
                 WHEN element_at(features, {feat_idx + 1}) IS NULL THEN NULL
                 WHEN isnan(element_at(features, {feat_idx + 1})) THEN element_at(features, {feat_idx + 1})
-                WHEN isinf(element_at(features, {feat_idx + 1})) THEN element_at(features, {feat_idx + 1})
+                WHEN element_at(features, {feat_idx + 1}) = double('inf') OR element_at(features, {feat_idx + 1}) = double('-inf') THEN element_at(features, {feat_idx + 1})
                 ELSE {transform_expr}
             END
         """
