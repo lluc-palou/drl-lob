@@ -75,14 +75,12 @@ def main():
     if len(final_halflifes) > 5:
         logger(f'  ... and {len(final_halflifes) - 5} more', "INFO")
     
-    # Create Spark session
+    # Create Spark session (uses default 8GB driver memory and jar path)
     logger('Initializing Spark...', "INFO")
     spark = create_spark_session(
         app_name="EWMAStandardization",
         db_name=DB_NAME,
-        mongo_uri=MONGO_URI,
-        driver_memory=DRIVER_MEMORY,
-        jar_files_path=JAR_FILES_PATH
+        mongo_uri=MONGO_URI
     )
     
     try:

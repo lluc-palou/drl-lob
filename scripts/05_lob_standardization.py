@@ -49,12 +49,11 @@ ADDITIONAL_SPARK_CONFIGS = {
     "spark.mongodb.write.retryWrites": "true",
 }
 
-# Create Spark session
+# Create Spark session (uses default 8GB driver memory)
 spark = create_spark_session(
     app_name="Stage5_LOB_Standardization",
     mongo_uri=MONGO_URI,
     db_name=DB_NAME,
-    driver_memory="8g",
     additional_configs=ADDITIONAL_SPARK_CONFIGS
 )
 

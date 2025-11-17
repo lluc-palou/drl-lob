@@ -149,15 +149,13 @@ def main():
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
     logger(f'MLflow experiment: {MLFLOW_EXPERIMENT_NAME}', "INFO")
     
-    # Create Spark session
+    # Create Spark session (uses default 8GB driver memory and jar path)
     logger('', "INFO")
     logger('Initializing Spark...', "INFO")
     spark = create_spark_session(
         app_name="FeatureStandardizationSelection",
         db_name=DB_NAME,
-        mongo_uri=MONGO_URI,
-        driver_memory=DRIVER_MEMORY,
-        jar_files_path=JAR_FILES_PATH
+        mongo_uri=MONGO_URI
     )
     
     try:

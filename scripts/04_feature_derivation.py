@@ -65,16 +65,14 @@ def main():
     logger(f'  Historical lags: {CONFIG["historical_lags"]}', "INFO")
     logger(f'  Depth bands: {CONFIG["depth_bands"]}', "INFO")
     logger(f'  Variance half-life: {CONFIG["variance_half_life"]}', "INFO")
-    
-    # Create Spark session
+
+    # Create Spark session (uses default 8GB driver memory and jar path)
     logger('', "INFO")
     logger('Initializing Spark session...', "INFO")
     spark = create_spark_session(
         app_name="FeatureDerivation",
         db_name=DB_NAME,
         mongo_uri=MONGO_URI,
-        driver_memory="8g",
-        jar_files_path="file:///C:/spark/spark-3.4.1-bin-hadoop3/jars/",
         additional_configs=ADDITIONAL_SPARK_CONFIGS
     )
     

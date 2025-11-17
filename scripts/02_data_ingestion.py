@@ -39,12 +39,11 @@ OUTPUT_COLLECTION = "output"  # Temporary output during processing
 INPUT_COLLECTION = "input"    # Final collection name after rename
 INGESTION_LOG_COLL = "ingestion_log"
 
-# Create Spark session with UTC timezone
+# Create Spark session with UTC timezone (uses default 8GB driver memory)
 spark = create_spark_session(
     app_name="Stage1_RawIngestion",
     mongo_uri=MONGO_URI,
-    db_name=DB_NAME,
-    driver_memory="4g"
+    db_name=DB_NAME
 )
 
 # =================================================================================================
