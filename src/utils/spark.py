@@ -54,6 +54,7 @@ def create_spark_session(
         .config("spark.network.timeout", "7200s")  # 2 hours for network operations
         .config("spark.executor.heartbeatInterval", "60s")  # Heartbeat every 60s
         .config("spark.python.worker.reuse", "true")  # Reuse Python workers
+        .config("spark.python.worker.timeout", "7200")  # 2 hours for Python worker (in seconds)
         .config("spark.rpc.askTimeout", "7200s")  # 2 hours for RPC calls
         .config("spark.rpc.lookupTimeout", "7200s")  # 2 hours for RPC lookups
         .config("spark.core.connection.ack.wait.timeout", "7200s")  # Connection timeout
