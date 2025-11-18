@@ -24,6 +24,40 @@ class DataStamper:
         self.spark = spark
         self.db_name = db_name
 
+    def _normalize_timestamp_str(self, ts) -> str:
+        """
+        Normalize timestamp to match MongoDB's dateToString format precision.
+
+        MongoDB uses format "%Y-%m-%dT%H:%M:%S.%L" which outputs 3-digit milliseconds
+        with ISO format (T separator, no timezone suffix after our pipeline removes Z).
+
+        Args:
+            ts: Timestamp object (datetime or string)
+
+        Returns:
+            Normalized timestamp string with millisecond precision (e.g., "2025-07-04T00:00:13.211")
+        """
+        # Convert datetime to ISO format string with T separator
+        if hasattr(ts, 'isoformat'):
+            ts_str = ts.isoformat()
+        else:
+            ts_str = str(ts)
+
+        # Remove timezone markers
+        ts_str = ts_str.replace('Z', '').replace('+00:00', '')
+
+        # Replace space with T if present (for str() output)
+        ts_str = ts_str.replace(' ', 'T')
+
+        # Truncate to millisecond precision to match MongoDB output
+        # Format: "YYYY-MM-DDTHH:MM:SS.mmm" (3 decimal places)
+        if '.' in ts_str:
+            base, fractional = ts_str.rsplit('.', 1)
+            # Keep only first 3 digits (milliseconds)
+            ts_str = f"{base}.{fractional[:3]}"
+
+        return ts_str
+
     def _build_fold_assignment_sql(self) -> str:
         """
         Build SQL CASE expression to determine fold_id and fold_type from timestamp_str.
@@ -32,12 +66,17 @@ class DataStamper:
             SQL expression for fold assignment
         """
         cases = []
+        logger(f'Building fold assignment SQL for {len(self.folds)} folds:', level="INFO")
+
         for fold in self.folds:
             fold_dict = fold.to_dict()
-            start_str = str(fold_dict['start_ts']).replace('Z', '').replace('+00:00', '')
-            end_str = str(fold_dict['end_ts']).replace('Z', '').replace('+00:00', '')
+            # Normalize to millisecond precision to match MongoDB's timestamp_str format
+            start_str = self._normalize_timestamp_str(fold_dict['start_ts'])
+            end_str = self._normalize_timestamp_str(fold_dict['end_ts'])
             fold_id = fold_dict['fold_id']
             fold_type = fold_dict['fold_type']
+
+            logger(f'  Fold {fold_id} ({fold_type}): {start_str} <= ts < {end_str}', level="INFO")
 
             cases.append(f"""
                 WHEN timestamp_str >= '{start_str}' AND timestamp_str < '{end_str}'
@@ -45,12 +84,15 @@ class DataStamper:
             """)
 
         # Default case: excluded
-        return f"""
+        sql_expr = f"""
             CASE
                 {' '.join(cases)}
                 ELSE named_struct('fold_id', -1, 'fold_type', 'excluded')
             END
         """
+
+        logger(f'Fold assignment SQL generated ({len(cases)} WHEN clauses)', level="INFO")
+        return sql_expr
 
     def _build_role_assignment_sql(self, split_id: int, split: Dict) -> str:
         """
@@ -74,14 +116,16 @@ class DataStamper:
 
         for fold_id_key, ranges in purged_ranges_dict.items():
             for start, end in ranges:
-                start_str = str(start).replace('Z', '').replace('+00:00', '')
-                end_str = str(end).replace('Z', '').replace('+00:00', '')
+                # Normalize to millisecond precision to match MongoDB's timestamp_str format
+                start_str = self._normalize_timestamp_str(start)
+                end_str = self._normalize_timestamp_str(end)
                 purge_conditions.append(f"(timestamp_str >= '{start_str}' AND timestamp_str < '{end_str}')")
 
         for fold_id_key, ranges in embargoed_ranges_dict.items():
             for start, end in ranges:
-                start_str = str(start).replace('Z', '').replace('+00:00', '')
-                end_str = str(end).replace('Z', '').replace('+00:00', '')
+                # Normalize to millisecond precision to match MongoDB's timestamp_str format
+                start_str = self._normalize_timestamp_str(start)
+                end_str = self._normalize_timestamp_str(end)
                 embargo_conditions.append(f"(timestamp_str >= '{start_str}' AND timestamp_str < '{end_str}')")
 
         purge_check = " OR ".join(purge_conditions) if purge_conditions else "FALSE"
@@ -121,6 +165,12 @@ class DataStamper:
         stamped_df = df.withColumn('fold_info', expr(fold_assignment_expr))
         stamped_df = stamped_df.withColumn('fold_id', col('fold_info.fold_id'))
         stamped_df = stamped_df.withColumn('fold_type', col('fold_info.fold_type'))
+
+        # Debug: Show sample of timestamp matches
+        sample_rows = stamped_df.select('timestamp_str', 'fold_id', 'fold_type').limit(5).collect()
+        logger('Sample fold assignments:', level="INFO")
+        for row in sample_rows:
+            logger(f'  {row.timestamp_str} -> fold_id={row.fold_id}, fold_type={row.fold_type}', level="INFO")
 
         # Step 2: Build split_roles map for all splits
         split_role_exprs = []
@@ -245,7 +295,7 @@ class DataStamper:
             }},
             {"$sort": {"timestamp": 1}},
             {"$addFields": {
-                "timestamp_str": {"$dateToString": {"format": "%Y-%m-%dT%H:%M:%S.%LZ", "date": "$timestamp"}},
+                "timestamp_str": {"$dateToString": {"format": "%Y-%m-%dT%H:%M:%S.%L", "date": "$timestamp"}},
                 "_id_str": {"$toString": "$_id"}  # Preserve _id as string for processing
             }}
         ]
