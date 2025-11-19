@@ -237,7 +237,31 @@ def main():
         
         logger('', "INFO")
         log_section('MATERIALIZING SPLITS')
-        
+
+        # CRITICAL: Create timestamp index on input collection for efficient hourly queries
+        # Without this index, each hourly query performs a full collection scan O(N)
+        # With index: O(log N + matches) - reduces processing time dramatically
+        logger('Creating timestamp index on input collection...', "INFO")
+        from pymongo import MongoClient, ASCENDING
+        mongo_uri = spark.sparkContext.getConf().get('spark.mongodb.read.connection.uri', 'mongodb://127.0.0.1:27017/')
+        client = MongoClient(mongo_uri)
+        db = client[DB_NAME]
+        input_coll = db[INPUT_COLLECTION]
+
+        # Check if index already exists
+        existing_indexes = list(input_coll.list_indexes())
+        has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
+
+        if not has_timestamp_index:
+            logger('Creating index on timestamp field...', "INFO")
+            input_coll.create_index([("timestamp", ASCENDING)], background=False)
+            logger('Timestamp index created successfully', "INFO")
+        else:
+            logger('Timestamp index already exists', "INFO")
+
+        client.close()
+        logger('', "INFO")
+
         # Initialize materializer
         # NOTE: This assumes SplitMaterializer accepts these parameters
         # You may need to modify the materializer class to accept projection parameters
