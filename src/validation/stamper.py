@@ -16,13 +16,42 @@ class DataStamper:
 
     def __init__(self, metadata: Dict, folds: List, spark, db_name: str):
         """
-        Initializes data stamper.
+        Initializes data stamper with MongoDB connection pooling.
         """
         self.metadata = metadata
         self.folds = folds
         self.folds_by_id = {f.fold_id: f for f in folds}
         self.spark = spark
         self.db_name = db_name
+        self.mongo_client = None  # Will be initialized when needed
+
+    def _init_mongo_client(self):
+        """
+        Initialize MongoDB client with connection pooling.
+        Reuses the same client across all batch writes for better performance.
+        """
+        if self.mongo_client is None:
+            from pymongo import MongoClient
+
+            # Get MongoDB URI from Spark config or use default
+            mongo_uri = self.spark.sparkContext.getConf().get(
+                'spark.mongodb.read.connection.uri',
+                'mongodb://127.0.0.1:27017/'
+            )
+
+            # Use extended socket timeout for large documents (2 hours = 7200000ms)
+            # Connection pooling enabled by default (maxPoolSize=100)
+            self.mongo_client = MongoClient(mongo_uri, socketTimeoutMS=7200000)
+            logger('MongoDB connection pool initialized', level="INFO")
+
+    def _close_mongo_client(self):
+        """
+        Close MongoDB client and release connection pool.
+        """
+        if self.mongo_client is not None:
+            self.mongo_client.close()
+            self.mongo_client = None
+            logger('MongoDB connection pool closed', level="INFO")
 
     def _normalize_timestamp_str(self, ts) -> str:
         """
@@ -195,10 +224,14 @@ class DataStamper:
         MODIFICATIONS:
         - Preserves ObjectId format in output
         - Ensures temporal ordering with sequential writes
+        - Uses connection pooling for better performance
         """
         logger('Processing hourly batches with complete role stamping...', level="INFO")
         logger('ObjectId preservation: ENABLED', level="INFO")
         logger('Temporal ordering preservation: ENABLED (sequential writes)', level="INFO")
+
+        # Initialize MongoDB connection pool once for all batches
+        self._init_mongo_client()
 
         data_summary = self.metadata['data_summary']
 
@@ -281,6 +314,9 @@ class DataStamper:
 
         logger(f'Processed {batch_count} batches, {total_records:,} total records', level="INFO")
         logger(f'Output collection temporal ordering: GUARANTEED', level="INFO")
+
+        # Close MongoDB connection pool
+        self._close_mongo_client()
 
     def _load_hour_batch(self, collection: str, start_hour: datetime, end_hour: datetime) -> DataFrame:
         """
@@ -370,19 +406,11 @@ class DataStamper:
         Helper method to write a list of documents to MongoDB.
         Extracted to allow chunked writing for large batches.
 
-        Uses extended socket timeout for large documents (~200KB each).
+        OPTIMIZED: Uses pooled MongoDB connection instead of creating new client per chunk.
+        This significantly reduces connection overhead when processing many batches.
         """
-        from pymongo import MongoClient
-
-        # Get MongoDB URI from Spark config or use default
-        mongo_uri = self.spark.sparkContext.getConf().get(
-            'spark.mongodb.read.connection.uri',
-            'mongodb://127.0.0.1:27017/'
-        )
-
-        # Use extended socket timeout for large documents (2 hours = 7200000ms)
-        client = MongoClient(mongo_uri, socketTimeoutMS=7200000)
-        db = client[self.db_name]
+        # Reuse the pooled MongoDB client
+        db = self.mongo_client[self.db_name]
         collection = db[output_collection]
 
         # Insert with ordered=True to preserve temporal ordering
@@ -391,5 +419,3 @@ class DataStamper:
         except Exception as e:
             logger(f'Error inserting batch: {str(e)}', level="ERROR")
             raise
-        finally:
-            client.close()
