@@ -105,23 +105,36 @@ class SplitMaterializer:
                 continue
             
             # Materialize each split for this hour
+            hour_writes = 0
+            splits_with_data = []
             for split_id in self.split_ids:
                 split_df = self._extract_split(hour_batch, split_id)
                 split_count = split_df.count()
-                
+
                 if split_count > 0:
                     collection_name = f"split_{split_id}_input"
                     self._write_to_collection(split_df, collection_name)
                     split_stats[split_id] += split_count
-            
+                    hour_writes += split_count
+                    splits_with_data.append(f"{split_id}({split_count})")
+
+            # Log which splits received data
+            if splits_with_data:
+                logger(f'  Splits written: {", ".join(splits_with_data[:5])}{"..." if len(splits_with_data) > 5 else ""}', "INFO")
+
             # Materialize test collection if configured
             if self.config.get('create_test_collection', False):
                 test_df = self._extract_test_samples(hour_batch)
                 test_batch_count = test_df.count()
-                
+
                 if test_batch_count > 0:
                     self._write_to_collection(test_df, "test_data")
                     test_count += test_batch_count
+                    hour_writes += test_batch_count
+
+            # Log write summary for this hour
+            if hour_writes > 0:
+                logger(f'  → Wrote {hour_writes:,} documents across all splits', "INFO")
             
             # Clean up
             hour_batch.unpersist()
@@ -167,6 +180,13 @@ class SplitMaterializer:
         # Add role column - every document gets its role for this split
         df_split = df.withColumn("role", col("split_roles").getField(split_key))
 
+        # Debug: count before filtering (only log for first split to avoid spam)
+        if split_id == 0:
+            before_count = df_split.count()
+            role_counts = df_split.groupBy("role").count().collect()
+            role_dist = {row['role']: row['count'] for row in role_counts}
+            logger(f'    [Split 0 diagnostic] Before filter: {before_count} docs, roles: {role_dist}', "INFO")
+
         # Filter out test samples - they should only be in test_data collection
         df_split = df_split.filter(col("role") != "test")
 
@@ -175,7 +195,13 @@ class SplitMaterializer:
 
         # Remove duplicates - same timestamp should not appear twice
         # This ensures each split has unique timestamps only
+        before_dedup = df_split.count()
         df_split = df_split.dropDuplicates(["timestamp"])
+        after_dedup = df_split.count()
+
+        # Debug: log deduplication (only for first split)
+        if split_id == 0 and before_dedup != after_dedup:
+            logger(f'    [Split 0 diagnostic] Deduplication: {before_dedup} → {after_dedup} ({before_dedup - after_dedup} duplicates removed)', "INFO")
 
         return df_split
     
@@ -219,19 +245,22 @@ class SplitMaterializer:
     def _write_to_collection(self, df: DataFrame, collection_name: str):
         """
         Write DataFrame to MongoDB collection with ObjectId and timestamp preservation.
-        
+
         Args:
             df: DataFrame to write (must have timestamp_str column)
             collection_name: Target collection name
         """
+        doc_count = df.count()
+
         # Sort by timestamp for proper ordering
         df = df.orderBy("timestamp")
-        
+
         # Apply feature projection if configured
         if hasattr(self, 'projected_features') and hasattr(self, 'apply_projection_func'):
             df = self.apply_projection_func(df, self.projected_features)
-        
+
         # Write using ObjectId-preserving function
+        logger(f'    Writing {doc_count:,} docs to {collection_name}...', "INFO")
         write_to_mongodb_preserve_objectid(
             df=df,
             database=self.db_name,
@@ -239,6 +268,7 @@ class SplitMaterializer:
             mongo_uri=self.mongo_uri,
             mode="append"
         )
+        logger(f'    ✓ Written to {collection_name}', "INFO")
     
     def get_split_collections(self) -> list:
         """
