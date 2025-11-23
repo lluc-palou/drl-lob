@@ -562,13 +562,25 @@ class StylizedFactsTests:
         """Ljung-Box test for autocorrelation."""
         try:
             clean_series = series.dropna()
+
+            # Need at least 20 samples for meaningful autocorrelation test
+            if len(clean_series) < 20:
+                logger(f"  Ljung-Box test skipped for {feature_name}: only {len(clean_series)} samples", "DEBUG")
+                return
+
             lags = min(10, len(clean_series) // 5)
+
+            # Ensure lags > 0
+            if lags < 1:
+                logger(f"  Ljung-Box test skipped for {feature_name}: lags={lags}", "DEBUG")
+                return
+
             result = acorr_ljungbox(clean_series, lags=lags, return_df=False)
-            
+
             # Use the test at lag 10 (or maximum available lag)
             statistic = result[0][-1] if len(result[0]) > 0 else np.nan
             p_value = result[1][-1] if len(result[1]) > 0 else np.nan
-            
+
             self.test_results.append({
                 'fold_id': fold_id,
                 'fold_type': fold_type,
@@ -780,17 +792,27 @@ class StylizedFactsTests:
         """McLeod-Li test for ARCH effects."""
         try:
             clean_series = series.dropna()
-            
+
+            # Need at least 20 samples for meaningful test
+            if len(clean_series) < 20:
+                logger(f"  McLeod-Li test skipped for {feature_name}: only {len(clean_series)} samples", "DEBUG")
+                return
+
             # Test on squared series
             squared_series = clean_series ** 2
             lags = min(10, len(squared_series) // 5)
-            
+
+            # Ensure lags > 0
+            if lags < 1:
+                logger(f"  McLeod-Li test skipped for {feature_name}: lags={lags}", "DEBUG")
+                return
+
             result = acorr_ljungbox(squared_series, lags=lags, return_df=False)
-            
+
             # Use the test at lag 10 (or maximum available lag)
             statistic = result[0][-1] if len(result[0]) > 0 else np.nan
             p_value = result[1][-1] if len(result[1]) > 0 else np.nan
-            
+
             self.test_results.append({
                 'fold_id': fold_id,
                 'fold_type': fold_type,
