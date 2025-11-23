@@ -128,8 +128,19 @@ class SplitMaterializer:
 
             # Materialize test collection if configured
             if self.config.get('create_test_collection', False):
+                # For first 3 hours, show role distribution to understand test sample presence
+                if i < 3:
+                    split_0_key = str(self.split_ids[0])
+                    role_dist = hour_batch.groupBy(col("split_roles").getField(split_0_key)).count().collect()
+                    role_info = {row[f'split_roles.{split_0_key}']: row['count'] for row in role_dist}
+                    logger(f'  [Hour {i+1}] Split 0 role distribution: {role_info}', "INFO")
+
                 test_df = self._extract_test_samples(hour_batch)
                 test_batch_count = test_df.count()
+
+                # Log test sample count for first few hours or when found
+                if i < 3 or test_batch_count > 0:
+                    logger(f'  Test samples in this hour: {test_batch_count}', "INFO")
 
                 if test_batch_count > 0:
                     self._write_to_collection(test_df, "test_data")
