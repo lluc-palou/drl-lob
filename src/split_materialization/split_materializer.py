@@ -191,24 +191,26 @@ class SplitMaterializer:
             role_dist = {row['role']: row['count'] for row in role_counts}
             logger(f'    [Split 0 diagnostic] Before filter: {before_count} docs, roles: {role_dist}', "INFO")
 
+        # Keep existing fold_id and fold_type from input, drop split_roles
+        # IMPORTANT: Do this BEFORE filtering to avoid Spark evaluation issues
+        df_split = df_split.drop("split_roles")
+
         # Filter out test samples - they should only be in test_data collection
         df_split = df_split.filter(col("role") != "test")
 
-        # Keep existing fold_id and fold_type from input, drop split_roles
-        df_split = df_split.drop("split_roles")
+        # Debug: count after filter for split 0
+        if split_id == 0:
+            after_filter = df_split.count()
+            logger(f'    [Split 0 diagnostic] After filter: {after_filter} docs', "INFO")
 
         # Remove duplicates - same timestamp should not appear twice
         # This ensures each split has unique timestamps only
-        before_dedup = df_split.count()
         df_split = df_split.dropDuplicates(["timestamp"])
-        after_dedup = df_split.count()
 
-        # Debug: log deduplication for split 0 (always show, even if no duplicates)
+        # Debug: count after deduplication for split 0
         if split_id == 0:
-            if before_dedup != after_dedup:
-                logger(f'    [Split 0 diagnostic] Deduplication: {before_dedup} → {after_dedup} ({before_dedup - after_dedup} duplicates removed)', "INFO")
-            else:
-                logger(f'    [Split 0 diagnostic] After dedup: {after_dedup} docs (no duplicates)', "INFO")
+            after_dedup = df_split.count()
+            logger(f'    [Split 0 diagnostic] After dedup: {after_dedup} docs', "INFO")
 
         return df_split
     
