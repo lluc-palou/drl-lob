@@ -191,12 +191,22 @@ class SplitMaterializer:
             role_dist = {row['role']: row['count'] for row in role_counts}
             logger(f'    [Split 0 diagnostic] Before filter: {before_count} docs, roles: {role_dist}', "INFO")
 
+            # Check actual role values
+            sample_roles = df_split.select("role").limit(5).collect()
+            logger(f'    [Split 0 diagnostic] Sample role values: {[row.role for row in sample_roles]}', "INFO")
+
         # Keep existing fold_id and fold_type from input, drop split_roles
         # IMPORTANT: Do this BEFORE filtering to avoid Spark evaluation issues
         df_split = df_split.drop("split_roles")
 
         # Filter out test samples - they should only be in test_data collection
-        df_split = df_split.filter(col("role") != "test")
+        # Use explicit filter to avoid lazy evaluation issues
+        from pyspark.sql.functions import when
+        df_split = df_split.filter(
+            (col("role") == "train") |
+            (col("role") == "train_warmup") |
+            (col("role") == "validation")
+        )
 
         # Debug: count after filter for split 0
         if split_id == 0:
