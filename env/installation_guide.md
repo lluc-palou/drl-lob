@@ -99,7 +99,33 @@ Note: The MongoDB connector JAR files should be placed in `C:\spark\spark-3.4.1-
 
 ---
 
-## Step 5: Install Anaconda
+## Step 5: Install Git and Clone Repository
+
+1. Download and install Git from: https://git-scm.com/install/
+
+2. Follow the installation wizard setting the recommended settings.
+
+3. After installation, open **PowerShell** or **Command Prompt** and navigate to your desired workspace (e.g., Desktop):
+
+```powershell
+cd Desktop
+```
+
+4. Clone the project repository:
+
+```powershell
+git clone https://github.com/lluc-palou/rdl-lob.git
+```
+
+5. Navigate into the cloned repository:
+
+```powershell
+cd rdl-lob
+```
+
+---
+
+## Step 6: Install Anaconda
 
 Sign in, download and install Anaconda:
 
@@ -109,15 +135,17 @@ Follow the installation wizard and set recommended settings.
 
 ---
 
-## Step 6: Create Conda Environment
+## Step 7: Create Conda Environment
 
-Using Git the project's GitHub repository will be cloned to the desktop repository of the machine using: 
+1. Open **Anaconda PowerShell Prompt**
+
+2. Navigate to the cloned repository:
 
 ```powershell
-git clone https://github.com/lluc-palou/rdl-lob.git
+cd Desktop\rdl-lob
 ```
 
-Then, navigating into env directory inside the repository you can locate `environment.yaml` and run:
+3. Navigate into the env directory and create the environment using `environment.yaml`:
 
 ```powershell
 conda env create -f environment.yaml
@@ -131,7 +159,7 @@ conda activate tfg
 
 ---
 
-## Step 7: Configure PySpark to Use Conda Environment
+## Step 8: Configure PySpark to Use Conda Environment
 
 1. Activate your Conda environment:
 
@@ -148,7 +176,7 @@ setx PYSPARK_DRIVER_PYTHON "C:\ProgramData\anaconda3\envs\tfg\python.exe"
 
 ---
 
-## Step 8: Verification
+## Step 9: Verification
 
 After completing all steps and restarting your terminal:
 
@@ -164,10 +192,28 @@ pyspark
 
 ---
 
-## Step 9: Install Git
+## Step 10: Run and Verify MLflow
 
-Download and install Git:
+1. Ensure your Conda environment is activated:
+```powershell
+conda activate tfg
+```
 
-- **Git**: https://git-scm.com/install/
+2. Navigate to your project directory:
+```powershell
+cd Desktop\rdl-lob
+```
 
-Follow the installation wizard too setting the recommended settings. After installation, open **Anaconda PowerShell Prompt**.
+3. Start MLflow UI locally:
+```powershell
+mlflow ui
+```
+
+4. Open your web browser and navigate to:
+```
+http://localhost:5000
+```
+
+Expected result: You should see the MLflow tracking UI displaying experiments and runs.
+
+5. To stop MLflow, press `Ctrl+C` in the terminal.
