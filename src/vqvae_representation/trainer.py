@@ -205,6 +205,9 @@ class VQVAETrainer:
         }
         
         # Process hours in groups for better GPU utilization
+        total_load_time = 0.0
+        total_gpu_time = 0.0
+
         for hour_idx in range(0, len(all_hours), hours_per_acc):
             # Get hour group (e.g., 100 hours at once)
             hour_group = all_hours[hour_idx:min(hour_idx + hours_per_acc, len(all_hours))]
@@ -212,6 +215,7 @@ class VQVAETrainer:
             logger(f'  Loading hours {hour_idx+1}-{hour_idx+len(hour_group)} of {len(all_hours)} (role=train)...', "INFO")
 
             # Accumulate all hours in this group
+            load_start = time.time()
             accumulated_samples = []
             for i, hour in enumerate(hour_group):
                 hour_end = hour + timedelta(hours=1)
@@ -232,29 +236,34 @@ class VQVAETrainer:
 
                 if batch is not None:
                     accumulated_samples.append(batch)
-            
+
+            load_time = time.time() - load_start
+            total_load_time += load_time
+
             if not accumulated_samples:
                 continue
-            
+
             # Combine all hours: e.g., 100 hours × 120 samples = 12,000 samples
             large_batch = torch.cat(accumulated_samples, dim=0)
-            
+            logger(f'    Loaded {len(accumulated_samples)} hours with {large_batch.size(0):,} samples in {load_time:.1f}s', "INFO")
+
             # Process in mini-batches for GPU efficiency
+            gpu_start = time.time()
             num_samples = large_batch.size(0)
-            
+
             for i in range(0, num_samples, mini_batch_size):
                 mini_batch = large_batch[i:i+mini_batch_size].to(self.device)
-                
+
                 # Forward pass
                 self.optimizer.zero_grad()
                 x_recon, loss_dict = self.model(mini_batch)
-                
+
                 # Compute total loss with regularization
                 total_loss, loss_components = self._compute_total_loss(
                     loss_dict,
                     self.config['beta']
                 )
-                
+
                 # Backward pass with gradient clipping
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -262,7 +271,7 @@ class VQVAETrainer:
                     TRAINING_CONFIG['grad_clip_norm']
                 )
                 self.optimizer.step()
-                
+
                 # Accumulate metrics
                 epoch_metrics['total_loss'] += total_loss.item()
                 epoch_metrics['recon_loss'] += loss_components['recon_loss']
@@ -272,13 +281,20 @@ class VQVAETrainer:
                 epoch_metrics['codebook_usage'] += loss_dict['codebook_usage']
                 epoch_metrics['perplexity'] += loss_dict['perplexity']
                 epoch_metrics['num_batches'] += 1
-        
+
+            gpu_time = time.time() - gpu_start
+            total_gpu_time += gpu_time
+            logger(f'    GPU processing: {gpu_time:.1f}s ({large_batch.size(0) / gpu_time:.0f} samples/sec)', "INFO")
+
         # Average metrics
         if epoch_metrics['num_batches'] > 0:
             for key in epoch_metrics:
                 if key != 'num_batches':
                     epoch_metrics[key] /= epoch_metrics['num_batches']
-        
+
+        # Log timing breakdown
+        logger(f'  Epoch timing: {total_load_time:.1f}s loading + {total_gpu_time:.1f}s GPU = {total_load_time + total_gpu_time:.1f}s total', "INFO")
+
         return epoch_metrics
     
     def _validate_epoch(self, all_hours: List[datetime], epoch: int) -> Dict:
