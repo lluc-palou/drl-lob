@@ -7,33 +7,33 @@ Hyperparameter grids and training configurations for latent prior learning.
 # =================================================================================================
 # Hyperparameter Grid for Search
 # =================================================================================================
-# Budget-optimized: 18 configurations (embedding_dim FIXED to VQ-VAE's D=64)
+# Budget-optimized: 12 configurations
 #
 # Expected runtime (assuming ~5s per epoch with prefetching):
-# - Worst case (75 epochs per split): 18 configs × 28 splits × 75 epochs × 5s = 189,000s = 52.5 hours = $37.28
-# - Expected case (early stopping ~15 epochs): 18 configs × 28 splits × 15 epochs × 5s = 37,800s = 10.5 hours = $7.46
-# - Per-split estimate: 18 configs × 15 epochs × 5s = 1,350s = 22.5 minutes
+# - Worst case (75 epochs per split): 12 configs × 28 splits × 75 epochs × 5s = 126,000s = 35 hours = $24.85
+# - Expected case (early stopping ~15 epochs): 12 configs × 28 splits × 15 epochs × 5s = 25,200s = 7 hours = $4.97
+# - Per-split estimate: 12 configs × 15 epochs × 5s = 900s = 15 minutes
 #
 # Note: Prior model is much faster than VQVAE (smaller model, integer sequences vs LOB bins)
-# VQ-VAE best config: K=128, D=64 → Prior uses embedding_dim=64 (fixed)
-# Search space: n_layers (depth), n_channels (width), dropout (regularization)
+# Prior learns its own embeddings for sequence modeling (independent of VQ-VAE embeddings)
+# Search space: embedding_dim, n_layers (depth), n_channels (width)
 # =================================================================================================
 
 PRIOR_HYPERPARAM_GRID = {
     # Architecture parameters
-    # Note: VQ-VAE best config selected K=128 (codebook size) and D=64 (embedding dimension)
-    # Prior must use same embedding dimension to match VQ-VAE output
-    'embedding_dim': [64],               # Code embedding size: FIXED to match VQ-VAE D=64
+    # Note: Prior learns its own embeddings for sequence modeling (independent of VQ-VAE)
+    # VQ-VAE uses K=128 codebook entries, but Prior embedding_dim is a free hyperparameter
+    'embedding_dim': [128, 192],         # Prior's learned embedding size (not tied to VQ-VAE's D)
     'n_layers': [6, 8, 10],              # Causal CNN depth (receptive field)
-    'n_channels': [64, 80, 96],          # Causal CNN width (capacity) - expanded range
+    'n_channels': [64, 80],              # Causal CNN width (capacity)
     'kernel_size': [2],                  # Standard for causal convolutions
 
     # Training parameters
     'learning_rate': [1e-3],             # Adam learning rate
-    'dropout': [0.1, 0.15],              # Regularization - expanded range
+    'dropout': [0.15],                   # Regularization
 }
-# Total: 1 × 3 × 3 × 1 × 1 × 2 = 18 configurations
-# Parameter range: embedding_dim fixed to VQ-VAE D=64, expanded n_channels and dropout
+# Total: 2 × 3 × 2 = 12 configurations
+# Parameter range: optimized for computational efficiency
 
 # =================================================================================================
 # Training Configuration
