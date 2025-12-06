@@ -7,19 +7,22 @@ Hyperparameter grids and training configurations for latent prior learning.
 # =================================================================================================
 # Hyperparameter Grid for Search
 # =================================================================================================
-# Budget-optimized: 12 configurations
+# Budget-optimized: 18 configurations (aligned with VQ-VAE architecture K=128, D=64)
 #
 # Expected runtime (assuming ~5s per epoch with prefetching):
-# - Worst case (75 epochs per split): 12 configs × 28 splits × 75 epochs × 5s = 126,000s = 35 hours = $24.85
-# - Expected case (early stopping ~15 epochs): 12 configs × 28 splits × 15 epochs × 5s = 25,200s = 7 hours = $4.97
-# - Per-split estimate: 12 configs × 15 epochs × 5s = 900s = 15 minutes
+# - Worst case (75 epochs per split): 18 configs × 28 splits × 75 epochs × 5s = 189,000s = 52.5 hours = $37.28
+# - Expected case (early stopping ~15 epochs): 18 configs × 28 splits × 15 epochs × 5s = 37,800s = 10.5 hours = $7.46
+# - Per-split estimate: 18 configs × 15 epochs × 5s = 1,350s = 22.5 minutes
 #
 # Note: Prior model is much faster than VQVAE (smaller model, integer sequences vs LOB bins)
+# Embedding dimensions [64, 96, 128] align with VQ-VAE's D=64 (match, 1.5×, 2×)
 # =================================================================================================
 
 PRIOR_HYPERPARAM_GRID = {
     # Architecture parameters
-    'embedding_dim': [128, 192],         # Code embedding size
+    # Note: VQ-VAE uses K=128 (codebook size) and D=64 (embedding dimension)
+    # Prior embedding_dim should align with or relate to VQ-VAE's D=64
+    'embedding_dim': [64, 96, 128],      # Code embedding size: match D, 1.5×D, 2×D
     'n_layers': [6, 8, 10],              # Causal CNN depth (receptive field)
     'n_channels': [64, 80],              # Causal CNN width (capacity)
     'kernel_size': [2],                  # Standard for causal convolutions
@@ -28,8 +31,8 @@ PRIOR_HYPERPARAM_GRID = {
     'learning_rate': [1e-3],             # Adam learning rate
     'dropout': [0.15],                   # Regularization
 }
-# Total: 2 × 3 × 2 = 12 configurations
-# Parameter range: optimized for computational efficiency
+# Total: 3 × 3 × 2 = 18 configurations
+# Parameter range: aligned with VQ-VAE architecture (K=128, D=64)
 
 # =================================================================================================
 # Training Configuration
