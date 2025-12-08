@@ -97,9 +97,9 @@ class RewardConfig:
 @dataclass
 class TrainingConfig:
     """Training procedure configuration."""
-    max_epochs: int = 25                 # Maximum training epochs (aligned with VQVAE)
-    patience: int = 3                    # Early stopping patience (aligned with VQVAE)
-    min_delta: float = 0.001             # Minimum improvement for early stopping
+    max_epochs: int = 100                # Maximum training epochs
+    patience: int = 10                   # Early stopping patience
+    min_delta: float = 0.5               # Minimum improvement for early stopping
     validate_every: int = 1              # Validate every N epochs
     log_every: int = 10                  # Log every N episodes
     checkpoint_dir: str = "checkpoints"  # Directory for model checkpoints
