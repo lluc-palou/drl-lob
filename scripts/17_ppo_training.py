@@ -121,7 +121,6 @@ LOG_DIR = ARTIFACT_BASE_DIR / "logs"
 WINDOW_SIZE = 50  # Observation window (W samples)
 HORIZON = 10      # Reward horizon (H samples)
 MAX_EPISODES_PER_EPOCH = 50  # Limit episodes per epoch for manageable training
-VALIDATE_EVERY = 5  # Validate every N epochs
 
 # =================================================================================================
 # Helper Functions
@@ -530,43 +529,40 @@ def train_split(
                f'Avg Reward: {train_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
 
-        # Validation (every N epochs)
-        if (epoch + 1) % VALIDATE_EVERY == 0:
-            val_metrics = validate_epoch(
-                agent, val_episodes, config.reward, config.model, device
+        # Validation (every epoch)
+        val_metrics = validate_epoch(
+            agent, val_episodes, config.reward, config.model, device
+        )
+
+        logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
+               f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
+               f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
+
+        # Log to MLflow
+        mlflow.log_metric("train_sharpe", train_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("train_avg_reward", train_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("train_avg_pnl", train_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("val_sharpe", val_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("val_avg_reward", val_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("val_avg_pnl", val_metrics["avg_pnl"], step=epoch)
+
+        # Save checkpoint if best
+        if val_metrics["sharpe"] > best_val_sharpe:
+            best_val_sharpe = val_metrics["sharpe"]
+            patience_counter = 0
+
+            save_checkpoint(
+                agent, optimizer, epoch, split_id, val_metrics["sharpe"],
+                checkpoint_dir=str(CHECKPOINT_DIR)
             )
-
-            logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
-                   f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
-                   f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
-
-            # Log to MLflow
-            mlflow.log_metric("train_sharpe", train_metrics["sharpe"], step=epoch)
-            mlflow.log_metric("train_avg_reward", train_metrics["avg_reward"], step=epoch)
-            mlflow.log_metric("val_sharpe", val_metrics["sharpe"], step=epoch)
-            mlflow.log_metric("val_avg_reward", val_metrics["avg_reward"], step=epoch)
-
-            # Save checkpoint if best
-            if val_metrics["sharpe"] > best_val_sharpe:
-                best_val_sharpe = val_metrics["sharpe"]
-                patience_counter = 0
-
-                save_checkpoint(
-                    agent, optimizer, epoch, split_id, val_metrics["sharpe"],
-                    checkpoint_dir=str(CHECKPOINT_DIR)
-                )
-                logger(f'  ✓ New best model saved (Sharpe: {best_val_sharpe:.4f})', "INFO")
-            else:
-                patience_counter += 1
-
-            # Early stopping
-            if patience_counter >= config.training.patience:
-                logger(f'  Early stopping triggered (patience: {config.training.patience})', "INFO")
-                break
+            logger(f'  ✓ New best model saved (Sharpe: {best_val_sharpe:.4f})', "INFO")
         else:
-            # Log only training metrics
-            mlflow.log_metric("train_sharpe", train_metrics["sharpe"], step=epoch)
-            mlflow.log_metric("train_avg_reward", train_metrics["avg_reward"], step=epoch)
+            patience_counter += 1
+
+        # Early stopping
+        if patience_counter >= config.training.patience:
+            logger(f'  Early stopping triggered (patience: {config.training.patience})', "INFO")
+            break
 
         epoch_time = time.time() - epoch_start
         logger(f'  Epoch time: {epoch_time:.2f}s', "INFO")
