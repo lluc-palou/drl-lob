@@ -1,10 +1,11 @@
 """
-PPO Agent Training Script (Stage 17)
+PPO Agent Training Script (Stage 18)
 
 Trains PPO agents for limit order book trading using VQ-VAE latent representations
 and hand-crafted features.
 
-This is Stage 17 in the pipeline - follows VQ-VAE production training (Stage 14).
+This is Stage 18 in the pipeline - follows synthetic generation (Stage 17) or can use
+VQ-VAE production training output (Stage 14) directly.
 
 Input: split_X_input collections in database 'raw' with:
        - codebook: VQ-VAE latent codes [0-127]
@@ -19,7 +20,7 @@ Output: Trained PPO agents saved to artifacts/ppo_agents/
         Checkpoints for best models per split
 
 Usage:
-    python scripts/17_ppo_training.py
+    python scripts/18_ppo_training.py
 """
 
 import os

@@ -1,22 +1,22 @@
 """
-Generalization Validation Script (Stage 18)
+Generalization Validation Script (Stage 19)
 
 Validates VQ-VAE and Prior model generalization through three experiments:
 1. VQ-VAE Reconstruction Generalization
 2. Prior Model Quality
 3. End-to-End Synthetic Data Quality
 
-This is Stage 18 in the pipeline - follows synthetic generation (Stage 16).
+This is Stage 19 in the pipeline - follows synthetic generation (Stage 17).
 
 Input: - split_X_input collections with validation samples
-       - VQ-VAE models from Stage 14
-       - Prior models from Stage 15/16
+       - VQ-VAE production models from Stage 14
+       - Prior production models from Stage 16
 
 Output: Validation metrics and visualizations saved to artifacts/generalization_validation/
         MLflow tracking with aggregate statistics
 
 Usage:
-    python scripts/18_generalization_validation.py
+    python scripts/19_generalization_validation.py
 """
 
 import os

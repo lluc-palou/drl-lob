@@ -1,13 +1,15 @@
 """
-Synthetic LOB Generation Script (Stage 15)
+Synthetic LOB Generation Script (Stage 17)
 
 Generates synthetic LOB sequences using trained prior and VQ-VAE models.
 
-Input: split_X_prior.pth + split_X_vqvae_model.pth
-Output: split_X_synthetic collections
+This is Stage 17 in the pipeline - follows Prior production training (Stage 16).
+
+Input: Production Prior models (Stage 16) + Production VQ-VAE models (Stage 14)
+Output: split_X_synthetic collections with synthetic LOB data
 
 Usage:
-    python scripts/15_synthetic_lob_generation.py
+    python scripts/17_synthetic_generation.py
 """
 
 import os
