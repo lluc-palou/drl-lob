@@ -19,41 +19,57 @@ from .config import MODEL_CONFIG
 class VectorQuantizer(nn.Module):
     """
     Vector quantization layer with learnable codebook.
-    
+
+    Supports both gradient-based and EMA-based codebook updates.
+    EMA updates improve training stability and prevent codebook collapse.
+
     Uses straight-through estimator for gradient flow during backprop.
     """
-    
-    def __init__(self, num_embeddings: int, embedding_dim: int):
+
+    def __init__(self, num_embeddings: int, embedding_dim: int,
+                 use_ema: bool = False, ema_decay: float = 0.99, ema_epsilon: float = 1e-5):
         """
         Initialize vector quantizer.
-        
+
         Args:
             num_embeddings: Number of codebook vectors (K)
             embedding_dim: Dimension of each codebook vector (D)
+            use_ema: Use EMA updates instead of gradient-based updates
+            ema_decay: EMA decay rate (gamma), typically 0.99
+            ema_epsilon: Small constant for numerical stability
         """
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
-        
+        self.use_ema = use_ema
+        self.ema_decay = ema_decay
+        self.ema_epsilon = ema_epsilon
+
         # Learnable codebook
         self.embedding = nn.Embedding(num_embeddings, embedding_dim)
         self.embedding.weight.data.uniform_(-1/num_embeddings, 1/num_embeddings)
+
+        if use_ema:
+            # EMA cluster size (N_i): running count of samples assigned to each code
+            self.register_buffer('ema_cluster_size', torch.zeros(num_embeddings))
+            # EMA embedding average (m_i): running average of encoder outputs per code
+            self.register_buffer('ema_embedding_avg', self.embedding.weight.data.clone())
     
     def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Quantize encoder outputs to nearest codebook vectors.
-        
+
         Args:
             z_e: Encoder output (batch_size, embedding_dim)
-            
+
         Returns:
             z_q: Quantized vectors (batch_size, embedding_dim)
             commitment_loss: Commitment loss for encoder
-            codebook_loss: Codebook loss for embeddings
+            codebook_loss: Codebook loss for embeddings (0 if using EMA)
             encoding_indices: Indices of selected codebook vectors (batch_size,)
         """
         B, D = z_e.shape
-        
+
         # Compute distances to all codebook vectors
         # ||z_e - e||^2 = ||z_e||^2 + ||e||^2 - 2*z_e·e
         distances = (
@@ -61,22 +77,59 @@ class VectorQuantizer(nn.Module):
             torch.sum(self.embedding.weight**2, dim=1) -
             2 * torch.matmul(z_e, self.embedding.weight.t())
         )
-        
+
         # Find nearest codebook vectors
         encoding_indices = torch.argmin(distances, dim=1)
         z_q = self.embedding(encoding_indices)
-        
-        # Compute VQ losses
-        # Commitment loss: encoder commits to codebook
+
+        # Compute commitment loss (always used)
         commitment_loss = F.mse_loss(z_e, z_q.detach())
-        
-        # Codebook loss: codebook moves toward encoder outputs
-        codebook_loss = F.mse_loss(z_e.detach(), z_q)
-        
+
+        if self.use_ema and self.training:
+            # EMA codebook updates (no gradient-based loss)
+            self._ema_update(z_e, encoding_indices)
+            codebook_loss = torch.tensor(0.0, device=z_e.device)
+        else:
+            # Gradient-based codebook update
+            codebook_loss = F.mse_loss(z_e.detach(), z_q)
+
         # Straight-through estimator: copy gradients from decoder to encoder
         z_q = z_e + (z_q - z_e).detach()
-        
+
         return z_q, commitment_loss, codebook_loss, encoding_indices
+
+    def _ema_update(self, z_e: torch.Tensor, encoding_indices: torch.Tensor):
+        """
+        Update codebook using EMA.
+
+        Updates cluster counts and embedding averages, then recomputes embeddings.
+
+        Args:
+            z_e: Encoder outputs (batch_size, embedding_dim)
+            encoding_indices: Selected code indices (batch_size,)
+        """
+        # Create one-hot encodings: (batch_size, num_embeddings)
+        encodings = F.one_hot(encoding_indices, self.num_embeddings).float()
+
+        # Update cluster sizes with EMA
+        # N_i = γ * N_i + (1 - γ) * n_i
+        # n_i = number of samples assigned to code i in current batch
+        n_i = encodings.sum(0)  # (num_embeddings,)
+        self.ema_cluster_size = self.ema_cluster_size * self.ema_decay + n_i * (1 - self.ema_decay)
+
+        # Update embedding averages with EMA
+        # m_i = γ * m_i + (1 - γ) * sum(z_e for samples assigned to i)
+        dw = torch.matmul(encodings.t(), z_e)  # (num_embeddings, embedding_dim)
+        self.ema_embedding_avg = self.ema_embedding_avg * self.ema_decay + dw * (1 - self.ema_decay)
+
+        # Normalize to get updated embeddings
+        # e_i = m_i / N_i
+        # Add epsilon for numerical stability (Laplace smoothing)
+        n = self.ema_cluster_size.sum()
+        cluster_size = (self.ema_cluster_size + self.ema_epsilon) / (n + self.num_embeddings * self.ema_epsilon)
+
+        # Update embedding weights (no gradient needed since we're in training mode)
+        self.embedding.weight.data = self.ema_embedding_avg / cluster_size.unsqueeze(1)
     
     def get_codebook_usage(self, encoding_indices: torch.Tensor) -> float:
         """
@@ -336,7 +389,7 @@ class VQVAEModel(nn.Module):
     def __init__(self, config: Dict):
         """
         Initialize VQ-VAE model.
-        
+
         Args:
             config: Hyperparameter configuration with keys:
                 - B: Number of LOB bins
@@ -344,20 +397,24 @@ class VQVAEModel(nn.Module):
                 - D: Embedding dimension
                 - n_conv_layers: Number of conv layers (2 or 3)
                 - dropout: Dropout probability
+                - use_ema: Use EMA updates for codebook (optional, default: False)
+                - ema_decay: EMA decay rate (optional, default: 0.99)
         """
         super().__init__()
-        
+
         self.config = config
-        
+
         B = config['B']
         K = config['K']
         D = config['D']
         n_conv_layers = config['n_conv_layers']
         dropout = config['dropout']
-        
+        use_ema = config.get('use_ema', False)
+        ema_decay = config.get('ema_decay', 0.99)
+
         # Initialize components
         self.encoder = Encoder(B, D, n_conv_layers, dropout)
-        self.vq = VectorQuantizer(K, D)
+        self.vq = VectorQuantizer(K, D, use_ema=use_ema, ema_decay=ema_decay)
         self.decoder = Decoder(D, B, n_conv_layers, self.encoder.flatten_size, dropout)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
