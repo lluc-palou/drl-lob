@@ -22,8 +22,7 @@ from typing import Dict, List
 from src.utils.logging import logger
 from .prior_model import LatentPriorCNN
 from .prior_trainer import PriorTrainer
-from .prior_data_loader import get_all_hours
-from src.vqvae_representation.data_loader import discover_splits, get_split_info
+from src.vqvae_representation.data_loader import discover_splits, get_split_info, get_all_hours
 
 
 def train_production_model(
