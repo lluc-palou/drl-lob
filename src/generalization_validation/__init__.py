@@ -26,8 +26,8 @@ from .visualization import (
 )
 from .data_loader import (
     load_validation_samples,
+    load_synthetic_samples,
     load_vqvae_model,
-    load_prior_model,
     organize_codes_into_sequences
 )
 
@@ -46,7 +46,7 @@ __all__ = [
     'plot_transition_matrix',
     'plot_ngram_comparison',
     'load_validation_samples',
+    'load_synthetic_samples',
     'load_vqvae_model',
-    'load_prior_model',
     'organize_codes_into_sequences'
 ]
