@@ -125,8 +125,7 @@ class VectorQuantizer(nn.Module):
         # Normalize to get updated embeddings
         # e_i = m_i / N_i
         # Add epsilon for numerical stability (Laplace smoothing)
-        n = self.ema_cluster_size.sum()
-        cluster_size = (self.ema_cluster_size + self.ema_epsilon) / (n + self.num_embeddings * self.ema_epsilon)
+        cluster_size = self.ema_cluster_size + self.ema_epsilon
 
         # Update embedding weights (no gradient needed since we're in training mode)
         self.embedding.weight.data = self.ema_embedding_avg / cluster_size.unsqueeze(1)
