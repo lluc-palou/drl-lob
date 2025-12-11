@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict
 from src.utils.logging import logger
-from .data_loader import load_validation_samples, load_prior_model, organize_codes_into_sequences
+from .data_loader import load_validation_samples, load_synthetic_samples, organize_codes_into_sequences
 from .metrics import (
     compute_code_frequency,
     compute_transition_matrix,
@@ -28,14 +28,12 @@ class PriorQualityValidator:
         self,
         mongo_uri: str,
         db_name: str,
-        prior_model_dir: Path,
         output_dir: Path,
         device: torch.device,
         seq_len: int = 120
     ):
         self.mongo_uri = mongo_uri
         self.db_name = db_name
-        self.prior_model_dir = prior_model_dir
         self.output_dir = output_dir
         self.device = device
         self.seq_len = seq_len
@@ -43,12 +41,13 @@ class PriorQualityValidator:
         # Create output directory
         (self.output_dir / "experiment2_prior_quality").mkdir(parents=True, exist_ok=True)
 
-    def validate_split(self, split_id: int) -> Dict:
+    def validate_split(self, split_id: int, vocab_size: int = 128) -> Dict:
         """
-        Run Prior quality validation for one split.
+        Run Prior quality validation for one split using pre-generated synthetic data.
 
         Args:
             split_id: Split identifier
+            vocab_size: Vocabulary size (default: 128)
 
         Returns:
             Dictionary with validation metrics
@@ -57,31 +56,45 @@ class PriorQualityValidator:
         logger(f'Validating Prior model for split {split_id}...', "INFO")
 
         # Load validation codes
-        _, codebook_indices, _ = load_validation_samples(
+        _, val_codebook_indices, _ = load_validation_samples(
             self.mongo_uri, self.db_name, split_id
         )
 
-        logger(f'  Validation codes: {len(codebook_indices):,}', "INFO")
+        logger(f'  Validation codes: {len(val_codebook_indices):,}', "INFO")
 
-        # Organize into sequences
+        # Organize validation codes into sequences
         val_sequences = organize_codes_into_sequences(
-            codebook_indices, self.seq_len, stride=self.seq_len
+            val_codebook_indices, self.seq_len, stride=self.seq_len
         )
 
-        n_sequences = len(val_sequences)
-        logger(f'  Validation sequences: {n_sequences}', "INFO")
+        n_val_sequences = len(val_sequences)
+        logger(f'  Validation sequences: {n_val_sequences}', "INFO")
 
-        # Load Prior model
-        model_path = self.prior_model_dir / f"split_{split_id}_prior.pth"
-        if not model_path.exists():
-            raise FileNotFoundError(f"Prior model not found: {model_path}")
+        # Load pre-generated synthetic data
+        _, syn_codebook_indices, syn_sequence_ids = load_synthetic_samples(
+            self.mongo_uri, self.db_name, split_id
+        )
 
-        prior_model, prior_config = load_prior_model(model_path, self.device)
-        vocab_size = prior_config['vocab_size']
+        logger(f'  Synthetic codes: {len(syn_codebook_indices):,}', "INFO")
 
-        # Generate synthetic sequences
-        logger('  Generating synthetic sequences...', "INFO")
-        syn_sequences = self._generate_sequences(prior_model, n_sequences, vocab_size)
+        # Organize synthetic codes into sequences using sequence_id
+        # Each unique sequence_id represents one sequence of length seq_len
+        unique_seq_ids = np.unique(syn_sequence_ids)
+        syn_sequences = []
+
+        for seq_id in unique_seq_ids:
+            mask = syn_sequence_ids == seq_id
+            seq_codes = syn_codebook_indices[mask]
+
+            # Ensure correct length (should be seq_len)
+            if len(seq_codes) == self.seq_len:
+                syn_sequences.append(seq_codes)
+            else:
+                logger(f'  Warning: Sequence {seq_id} has length {len(seq_codes)}, expected {self.seq_len}', "WARNING")
+
+        syn_sequences = np.array(syn_sequences, dtype=np.int64)
+        n_syn_sequences = len(syn_sequences)
+        logger(f'  Synthetic sequences: {n_syn_sequences}', "INFO")
 
         # 1. Code frequency distributions
         logger('  Analyzing code frequencies...', "INFO")
@@ -172,8 +185,8 @@ class PriorQualityValidator:
         # Compile results
         results = {
             'split_id': split_id,
-            'n_val_sequences': n_sequences,
-            'n_syn_sequences': len(syn_sequences),
+            'n_val_sequences': n_val_sequences,
+            'n_syn_sequences': n_syn_sequences,
             'seq_len': self.seq_len,
             'vocab_size': vocab_size,
             'js_divergence_freq': float(js_div),
@@ -188,45 +201,3 @@ class PriorQualityValidator:
         logger(f'  ✓ Split {split_id} validation complete', "INFO")
 
         return results
-
-    def _generate_sequences(
-        self,
-        model,
-        n_sequences: int,
-        vocab_size: int
-    ) -> np.ndarray:
-        """
-        Generate synthetic sequences using Prior model.
-
-        Args:
-            model: Prior model
-            n_sequences: Number of sequences to generate
-            vocab_size: Vocabulary size
-
-        Returns:
-            sequences: (n_sequences, seq_len) array
-        """
-        model.eval()
-        sequences = []
-
-        with torch.no_grad():
-            for _ in range(n_sequences):
-                # Generate sequence
-                seq = model.generate(
-                    max_len=self.seq_len,
-                    temperature=1.0,
-                    device=self.device
-                )
-
-                # Ensure correct length
-                if len(seq) >= self.seq_len:
-                    seq = seq[:self.seq_len]
-                else:
-                    # Pad if needed (shouldn't happen with proper generation)
-                    seq = np.pad(seq, (0, self.seq_len - len(seq)), mode='edge')
-
-                sequences.append(seq)
-
-        sequences = np.array(sequences, dtype=np.int64)
-
-        return sequences

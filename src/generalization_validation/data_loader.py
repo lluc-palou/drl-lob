@@ -37,7 +37,7 @@ def load_validation_samples(
     # Query validation samples (both validation folds)
     cursor = collection.find(
         {'role': 'validation'},
-        {'bins': 1, 'codebook': 1, 'timestamp': 1}
+        {'bins': 1, 'codebook_index': 1, 'timestamp': 1}
     ).sort('timestamp', 1)
 
     original_vectors = []
@@ -46,7 +46,7 @@ def load_validation_samples(
 
     for doc in cursor:
         original_vectors.append(doc['bins'])
-        codebook_indices.append(doc['codebook'])
+        codebook_indices.append(doc['codebook_index'])
 
         # Handle timestamp
         ts = doc['timestamp']
@@ -91,39 +91,57 @@ def load_vqvae_model(model_path: Path, device: torch.device):
     return model
 
 
-def load_prior_model(model_path: Path, device: torch.device):
+def load_synthetic_samples(
+    mongo_uri: str,
+    db_name: str,
+    split_id: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Load Prior model from checkpoint.
+    Load pre-generated synthetic samples for a split.
 
     Args:
-        model_path: Path to model checkpoint
-        device: Device to load model on
+        mongo_uri: MongoDB connection URI
+        db_name: Database name
+        split_id: Split identifier
 
     Returns:
-        Prior model and config
+        synthetic_vectors: (N, 1001) array of synthetic LOB vectors (decoded)
+        codebook_indices: (N,) array of VQ-VAE codes
+        sequence_ids: (N,) array of sequence identifiers
     """
-    from src.prior.prior_model import TransformerPrior
+    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+    db = client[db_name]
+    collection_name = f"split_{split_id}_synthetic"
 
-    checkpoint = torch.load(model_path, map_location=device)
-    config = checkpoint['config']
+    if collection_name not in db.list_collection_names():
+        raise ValueError(f"Synthetic collection not found: {collection_name}")
 
-    # Create model with config
-    model = TransformerPrior(
-        vocab_size=config['vocab_size'],
-        d_model=config['d_model'],
-        n_heads=config['n_heads'],
-        n_layers=config['n_layers'],
-        d_ff=config['d_ff'],
-        dropout=config['dropout'],
-        max_seq_len=config.get('max_seq_len', 256)
-    ).to(device)
+    collection = db[collection_name]
 
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.eval()
+    # Query all synthetic samples sorted by sequence_id and position
+    cursor = collection.find(
+        {'is_synthetic': True},
+        {'bins': 1, 'codebook_index': 1, 'sequence_id': 1, 'position_in_sequence': 1}
+    ).sort([('sequence_id', 1), ('position_in_sequence', 1)])
 
-    logger(f'Loaded Prior model from {model_path}', "INFO")
+    synthetic_vectors = []
+    codebook_indices = []
+    sequence_ids = []
 
-    return model, config
+    for doc in cursor:
+        synthetic_vectors.append(doc['bins'])
+        codebook_indices.append(doc['codebook_index'])
+        sequence_ids.append(doc['sequence_id'])
+
+    client.close()
+
+    logger(f'Loaded {len(synthetic_vectors)} synthetic samples for split {split_id}', "INFO")
+
+    return (
+        np.array(synthetic_vectors, dtype=np.float32),
+        np.array(codebook_indices, dtype=np.int64),
+        np.array(sequence_ids, dtype=np.int64)
+    )
 
 
 def organize_codes_into_sequences(

@@ -155,7 +155,7 @@ def compute_aggregate_statistics(results: list, metric_name: str) -> dict:
 def main():
     """Main execution function."""
     logger('=' * 100, "INFO")
-    logger('GENERALIZATION VALIDATION (STAGE 18)', "INFO")
+    logger('GENERALIZATION VALIDATION (STAGE 19)', "INFO")
     logger('=' * 100, "INFO")
 
     # Setup device
@@ -200,12 +200,12 @@ def main():
 
     if RUN_EXPERIMENT_2:
         validators['exp2'] = PriorQualityValidator(
-            MONGO_URI, DB_NAME, PRIOR_MODEL_DIR, OUTPUT_DIR, device, seq_len=SEQ_LEN
+            MONGO_URI, DB_NAME, OUTPUT_DIR, device, seq_len=SEQ_LEN
         )
 
     if RUN_EXPERIMENT_3:
         validators['exp3'] = EndToEndValidator(
-            MONGO_URI, DB_NAME, VQVAE_MODEL_DIR, PRIOR_MODEL_DIR, OUTPUT_DIR, device, seq_len=SEQ_LEN
+            MONGO_URI, DB_NAME, VQVAE_MODEL_DIR, OUTPUT_DIR, device
         )
 
     # Storage for results

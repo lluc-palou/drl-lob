@@ -7,8 +7,8 @@ from typing import Dict
 from src.utils.logging import logger
 from .data_loader import (
     load_validation_samples,
+    load_synthetic_samples,
     load_vqvae_model,
-    load_prior_model,
     decode_codes_batch
 )
 from .metrics import compute_mmd, compute_ks_tests, compute_correlation_distance
@@ -16,37 +16,31 @@ from .visualization import plot_umap_comparison, plot_correlation_matrices
 
 
 class EndToEndValidator:
-    """Validates end-to-end pipeline quality (Prior + VQ-VAE decoder)."""
+    """Validates end-to-end pipeline quality using pre-generated synthetic data."""
 
     def __init__(
         self,
         mongo_uri: str,
         db_name: str,
         vqvae_model_dir: Path,
-        prior_model_dir: Path,
         output_dir: Path,
-        device: torch.device,
-        seq_len: int = 120
+        device: torch.device
     ):
         self.mongo_uri = mongo_uri
         self.db_name = db_name
         self.vqvae_model_dir = vqvae_model_dir
-        self.prior_model_dir = prior_model_dir
         self.output_dir = output_dir
         self.device = device
-        self.seq_len = seq_len
 
         # Create output directory
         (self.output_dir / "experiment3_end_to_end").mkdir(parents=True, exist_ok=True)
 
-    def validate_split(self, split_id: int, n_synthetic_samples: int = None) -> Dict:
+    def validate_split(self, split_id: int) -> Dict:
         """
-        Run end-to-end validation for one split.
+        Run end-to-end validation for one split using pre-generated synthetic data.
 
         Args:
             split_id: Split identifier
-            n_synthetic_samples: Number of synthetic samples to generate
-                                 (default: match validation size)
 
         Returns:
             Dictionary with validation metrics
@@ -62,35 +56,28 @@ class EndToEndValidator:
         n_val_samples = len(original_vectors)
         logger(f'  Validation samples: {n_val_samples:,}', "INFO")
 
-        # Load models
+        # Load VQ-VAE model
         vqvae_path = self.vqvae_model_dir / f"split_{split_id}_model.pth"
-        prior_path = self.prior_model_dir / f"split_{split_id}_prior.pth"
 
         if not vqvae_path.exists():
             raise FileNotFoundError(f"VQ-VAE model not found: {vqvae_path}")
-        if not prior_path.exists():
-            raise FileNotFoundError(f"Prior model not found: {prior_path}")
 
         vqvae_model = load_vqvae_model(vqvae_path, self.device)
-        prior_model, prior_config = load_prior_model(prior_path, self.device)
-        vocab_size = prior_config['vocab_size']
 
-        # Get validation reconstructions (fair comparison)
+        # Get validation reconstructions (fair comparison: both go through VQ-VAE)
         logger('  Decoding validation codes...', "INFO")
         val_reconstructed = decode_codes_batch(
             vqvae_model, codebook_indices, self.device, batch_size=512
         )
 
-        # Generate synthetic data
-        if n_synthetic_samples is None:
-            n_synthetic_samples = n_val_samples
-
-        logger(f'  Generating {n_synthetic_samples:,} synthetic samples...', "INFO")
-        synthetic_vectors = self._generate_synthetic_data(
-            prior_model, vqvae_model, n_synthetic_samples, vocab_size
+        # Load pre-generated synthetic data (already decoded)
+        logger('  Loading synthetic data...', "INFO")
+        synthetic_vectors, syn_codebook_indices, _ = load_synthetic_samples(
+            self.mongo_uri, self.db_name, split_id
         )
 
-        logger(f'  Synthetic samples generated: {len(synthetic_vectors):,}', "INFO")
+        n_syn_samples = len(synthetic_vectors)
+        logger(f'  Synthetic samples: {n_syn_samples:,}', "INFO")
 
         # Compute metrics
         logger('  Computing MMD...', "INFO")
@@ -139,7 +126,7 @@ class EndToEndValidator:
         results = {
             'split_id': split_id,
             'n_val_samples': n_val_samples,
-            'n_syn_samples': len(synthetic_vectors),
+            'n_syn_samples': n_syn_samples,
             'mmd': float(mmd),
             'ks_mean_statistic': float(ks_results['mean_ks_statistic']),
             'ks_max_statistic': float(ks_results['max_ks_statistic']),
@@ -152,54 +139,6 @@ class EndToEndValidator:
         logger(f'  ✓ Split {split_id} validation complete', "INFO")
 
         return results
-
-    def _generate_synthetic_data(
-        self,
-        prior_model,
-        vqvae_model,
-        n_samples: int,
-        vocab_size: int
-    ) -> np.ndarray:
-        """
-        Generate synthetic data by sampling from Prior and decoding.
-
-        Args:
-            prior_model: Prior model
-            vqvae_model: VQ-VAE model
-            n_samples: Number of samples to generate
-            vocab_size: Vocabulary size
-
-        Returns:
-            synthetic_vectors: (n_samples, 1001) array
-        """
-        prior_model.eval()
-        vqvae_model.eval()
-
-        synthetic_codes = []
-
-        # Generate sequences
-        n_sequences = (n_samples + self.seq_len - 1) // self.seq_len
-
-        with torch.no_grad():
-            for _ in range(n_sequences):
-                # Generate sequence
-                seq = prior_model.generate(
-                    max_len=self.seq_len,
-                    temperature=1.0,
-                    device=self.device
-                )
-
-                synthetic_codes.extend(seq)
-
-        # Trim to exact number of samples
-        synthetic_codes = np.array(synthetic_codes[:n_samples], dtype=np.int64)
-
-        # Decode
-        synthetic_vectors = decode_codes_batch(
-            vqvae_model, synthetic_codes, self.device, batch_size=512
-        )
-
-        return synthetic_vectors
 
     def _plot_marginals(
         self,
