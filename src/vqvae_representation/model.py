@@ -51,7 +51,8 @@ class VectorQuantizer(nn.Module):
 
         if use_ema:
             # EMA cluster size (N_i): running count of samples assigned to each code
-            self.register_buffer('ema_cluster_size', torch.zeros(num_embeddings))
+            # Initialize to 1.0 (not 0) to prevent division by near-zero for unused codes
+            self.register_buffer('ema_cluster_size', torch.ones(num_embeddings))
             # EMA embedding average (m_i): running average of encoder outputs per code
             self.register_buffer('ema_embedding_avg', self.embedding.weight.data.clone())
     
