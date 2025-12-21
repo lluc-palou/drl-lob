@@ -74,10 +74,35 @@ class VQVAETrainer:
             weight_decay=TRAINING_CONFIG['weight_decay']
         )
 
+        # Initialize learning rate scheduler (cosine annealing for smooth decay)
+        self.scheduler = self._create_lr_scheduler()
+
         # Training state
         self.best_val_loss = float('inf')
         self.best_epoch = 0
         self.best_model_state = None
+
+    def _create_lr_scheduler(self):
+        """
+        Create cosine annealing learning rate scheduler.
+
+        Provides smooth decay from initial LR to min_lr over all epochs.
+
+        Returns:
+            CosineAnnealingLR scheduler or None
+        """
+        scheduler_type = TRAINING_CONFIG.get('lr_scheduler_type', None)
+
+        if scheduler_type == 'cosine':
+            # CosineAnnealingLR: smooth cosine decay
+            return optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=TRAINING_CONFIG['max_epochs'],
+                eta_min=TRAINING_CONFIG['lr_min']
+            )
+        else:
+            # No scheduler
+            return None
 
     def train_split(self, all_hours: List[datetime]) -> Dict:
         """
@@ -174,6 +199,14 @@ class VQVAETrainer:
                 # Deep copy model state (clone tensors, not just dict structure)
                 self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 logger(f'  → New best validation loss: {self.best_val_loss:.4f}', "INFO")
+
+            # Update learning rate scheduler (cosine annealing)
+            if self.scheduler is not None:
+                self.scheduler.step()
+                # Log learning rate periodically (every 10 epochs or when it changes significantly)
+                current_lr = self.optimizer.param_groups[0]['lr']
+                if epoch % 10 == 0 or epoch == 0:
+                    logger(f'  → Learning rate: {current_lr:.2e}', "INFO")
 
             # Early stopping check
             if epoch - self.best_epoch >= TRAINING_CONFIG['patience']:
