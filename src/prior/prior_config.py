@@ -12,8 +12,9 @@ Hyperparameter grids and training configurations for latent prior learning.
 # Key improvements:
 # - embedding_dim=64 matches VQ-VAE latent dimension
 # - Repeating dilation patterns prevent excessive receptive fields (seq_len=120)
-# - n_channels=[32, 64] provides lightweight vs full capacity options
-# - 6 focused configurations (down from 12)
+# - n_channels=[64, 80] restores capacity (learned from underfitting with n_channels=32)
+# - n_layers=[10, 12, 16] focuses on depth for capacity
+# - 6 focused configurations
 #
 # Expected runtime (assuming ~5s per epoch with prefetching):
 # - Worst case (25 epochs per split): 6 configs × 28 splits × 25 epochs × 5s = 21,000s = 5.8 hours = $4.12
@@ -23,8 +24,8 @@ Hyperparameter grids and training configurations for latent prior learning.
 PRIOR_HYPERPARAM_GRID = {
     # Architecture parameters
     'embedding_dim': [64],               # Match VQ-VAE embedding dimension
-    'n_layers': [8, 12, 16],             # Depth with repeating dilations (RF controlled)
-    'n_channels': [32, 64],              # Lightweight vs full capacity
+    'n_layers': [10, 12, 16],            # Depth with repeating dilations (RF controlled)
+    'n_channels': [64, 80],              # Restore capacity (64 or 80 channels)
     'kernel_size': [2],                  # Standard for causal convolutions
 
     # Training parameters
@@ -33,7 +34,7 @@ PRIOR_HYPERPARAM_GRID = {
 }
 # Total: 1 × 3 × 2 × 1 × 1 × 1 = 6 configurations
 # Receptive field: Max 127 timesteps (fully covers seq_len=120)
-# Parameter range: ~58K-426K (K=128) or ~74K-443K (K=512)
+# Parameter range: ~270K-710K (K=128) or ~287K-726K (K=512)
 
 # =================================================================================================
 # Training Configuration
