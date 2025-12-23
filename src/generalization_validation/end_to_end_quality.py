@@ -170,13 +170,15 @@ class EndToEndValidator:
             ax.hist(val_data[:, feat_idx], bins=50, alpha=0.5, label='Validation',
                    density=True, color='blue')
             ax.hist(syn_data[:, feat_idx], bins=50, alpha=0.5, label='Synthetic',
-                   density=True, color='red')
+                   density=True, color='orange')
 
-            ax.set_xlabel('Value')
-            ax.set_ylabel('Density')
-            ax.set_title(f'Feature {feat_idx}')
+            ax.set_xlabel('Value', color='black')
+            ax.set_ylabel('Density', color='black')
+            ax.set_title(f'Feature {feat_idx}', color='black')
             ax.legend()
-            ax.grid(True, alpha=0.3)
+            ax.tick_params(colors='black')
+            for spine in ax.spines.values():
+                spine.set_color('black')
 
         plt.tight_layout()
         plt.savefig(save_path, dpi=150, bbox_inches='tight')

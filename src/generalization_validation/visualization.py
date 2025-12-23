@@ -63,14 +63,18 @@ def plot_umap_comparison(
     )
     scatter_syn = ax.scatter(
         embedding_syn[:, 0], embedding_syn[:, 1],
-        c='red', alpha=0.3, s=10, label='Synthetic', rasterized=True
+        c='orange', alpha=0.3, s=10, label='Synthetic', rasterized=True
     )
 
-    ax.set_xlabel(f'{method.upper()} Dimension 1')
-    ax.set_ylabel(f'{method.upper()} Dimension 2')
-    ax.set_title(title)
+    ax.set_xlabel(f'{method.upper()} Dimension 1', color='black')
+    ax.set_ylabel(f'{method.upper()} Dimension 2', color='black')
+    ax.set_title(title, color='black')
     ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.tick_params(colors='black')
+    ax.spines['bottom'].set_color('black')
+    ax.spines['left'].set_color('black')
+    ax.spines['top'].set_color('black')
+    ax.spines['right'].set_color('black')
 
     plt.tight_layout()
 
@@ -99,25 +103,29 @@ def plot_reconstruction_error(
     fig, axes = plt.subplots(2, 1, figsize=(12, 8))
 
     # Bar plot of errors
-    axes[0].bar(range(len(reconstruction_errors)), reconstruction_errors, width=1.0)
-    axes[0].set_xlabel('Feature Index')
-    axes[0].set_ylabel('MSE')
-    axes[0].set_title('Per-Feature Reconstruction Error')
-    axes[0].grid(True, alpha=0.3)
+    axes[0].bar(range(len(reconstruction_errors)), reconstruction_errors, width=1.0, color='blue')
+    axes[0].set_xlabel('Feature Index', color='black')
+    axes[0].set_ylabel('MSE', color='black')
+    axes[0].set_title('Per-Feature Reconstruction Error', color='black')
+    axes[0].tick_params(colors='black')
+    for spine in axes[0].spines.values():
+        spine.set_color('black')
 
     # Histogram of errors
-    axes[1].hist(reconstruction_errors, bins=bins, edgecolor='black')
-    axes[1].set_xlabel('MSE')
-    axes[1].set_ylabel('Count')
-    axes[1].set_title('Distribution of Reconstruction Errors')
-    axes[1].grid(True, alpha=0.3)
+    axes[1].hist(reconstruction_errors, bins=bins, color='blue', edgecolor='black')
+    axes[1].set_xlabel('MSE', color='black')
+    axes[1].set_ylabel('Count', color='black')
+    axes[1].set_title('Distribution of Reconstruction Errors', color='black')
+    axes[1].tick_params(colors='black')
+    for spine in axes[1].spines.values():
+        spine.set_color('black')
 
     # Add statistics
     mean_err = np.mean(reconstruction_errors)
     median_err = np.median(reconstruction_errors)
     max_err = np.max(reconstruction_errors)
-    axes[1].axvline(mean_err, color='red', linestyle='--', label=f'Mean: {mean_err:.4f}')
-    axes[1].axvline(median_err, color='green', linestyle='--', label=f'Median: {median_err:.4f}')
+    axes[1].axvline(mean_err, color='orange', linestyle='--', linewidth=2, label=f'Mean: {mean_err:.4f}')
+    axes[1].axvline(median_err, color='blue', linestyle='--', linewidth=2, label=f'Median: {median_err:.4f}')
     axes[1].legend()
 
     plt.tight_layout()
@@ -150,28 +158,32 @@ def plot_code_frequency(
     x = np.arange(vocab_size)
     width = 0.4
 
-    axes[0].bar(x - width/2, freq_val, width, label='Validation', alpha=0.7)
-    axes[0].bar(x + width/2, freq_syn, width, label='Synthetic', alpha=0.7)
-    axes[0].set_xlabel('Code Index')
-    axes[0].set_ylabel('Frequency')
-    axes[0].set_title('Code Frequency Distributions')
+    axes[0].bar(x - width/2, freq_val, width, label='Validation', alpha=0.7, color='blue')
+    axes[0].bar(x + width/2, freq_syn, width, label='Synthetic', alpha=0.7, color='orange')
+    axes[0].set_xlabel('Code Index', color='black')
+    axes[0].set_ylabel('Frequency', color='black')
+    axes[0].set_title('Code Frequency Distributions', color='black')
     axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
+    axes[0].tick_params(colors='black')
+    for spine in axes[0].spines.values():
+        spine.set_color('black')
 
     # Scatter plot for correlation
-    axes[1].scatter(freq_val, freq_syn, alpha=0.5, s=30)
-    axes[1].plot([0, freq_val.max()], [0, freq_val.max()], 'r--', label='y=x')
-    axes[1].set_xlabel('Validation Frequency')
-    axes[1].set_ylabel('Synthetic Frequency')
-    axes[1].set_title('Code Frequency Correlation')
+    axes[1].scatter(freq_val, freq_syn, alpha=0.5, s=30, color='blue')
+    axes[1].plot([0, freq_val.max()], [0, freq_val.max()], color='orange', linestyle='--', linewidth=2, label='y=x')
+    axes[1].set_xlabel('Validation Frequency', color='black')
+    axes[1].set_ylabel('Synthetic Frequency', color='black')
+    axes[1].set_title('Code Frequency Correlation', color='black')
     axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
+    axes[1].tick_params(colors='black')
+    for spine in axes[1].spines.values():
+        spine.set_color('black')
 
     # Compute correlation
     corr = np.corrcoef(freq_val, freq_syn)[0, 1]
     axes[1].text(0.05, 0.95, f'Correlation: {corr:.4f}',
                 transform=axes[1].transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8, edgecolor='black'))
 
     plt.tight_layout()
 
@@ -203,29 +215,41 @@ def plot_transition_matrix(
         vmax = max(trans_val.max(), trans_syn.max())
 
     # Validation transition matrix
-    sns.heatmap(trans_val, ax=axes[0], cmap='viridis', vmin=0, vmax=vmax, cbar=True)
-    axes[0].set_title('Validation Transition Matrix')
-    axes[0].set_xlabel('To Code')
-    axes[0].set_ylabel('From Code')
+    sns.heatmap(trans_val, ax=axes[0], cmap='Blues', vmin=0, vmax=vmax, cbar=True,
+                cbar_kws={'label': ''})
+    axes[0].set_title('Validation Transition Matrix', color='black')
+    axes[0].set_xlabel('To Code', color='black')
+    axes[0].set_ylabel('From Code', color='black')
+    axes[0].tick_params(colors='black')
+    for spine in axes[0].spines.values():
+        spine.set_color('black')
 
     # Synthetic transition matrix
-    sns.heatmap(trans_syn, ax=axes[1], cmap='viridis', vmin=0, vmax=vmax, cbar=True)
-    axes[1].set_title('Synthetic Transition Matrix')
-    axes[1].set_xlabel('To Code')
-    axes[1].set_ylabel('From Code')
+    sns.heatmap(trans_syn, ax=axes[1], cmap='Oranges', vmin=0, vmax=vmax, cbar=True,
+                cbar_kws={'label': ''})
+    axes[1].set_title('Synthetic Transition Matrix', color='black')
+    axes[1].set_xlabel('To Code', color='black')
+    axes[1].set_ylabel('From Code', color='black')
+    axes[1].tick_params(colors='black')
+    for spine in axes[1].spines.values():
+        spine.set_color('black')
 
     # Difference matrix
     diff = np.abs(trans_val - trans_syn)
-    sns.heatmap(diff, ax=axes[2], cmap='Reds', vmin=0, cbar=True)
-    axes[2].set_title('Absolute Difference')
-    axes[2].set_xlabel('To Code')
-    axes[2].set_ylabel('From Code')
+    sns.heatmap(diff, ax=axes[2], cmap='Greys', vmin=0, cbar=True,
+                cbar_kws={'label': ''})
+    axes[2].set_title('Absolute Difference', color='black')
+    axes[2].set_xlabel('To Code', color='black')
+    axes[2].set_ylabel('From Code', color='black')
+    axes[2].tick_params(colors='black')
+    for spine in axes[2].spines.values():
+        spine.set_color('black')
 
     # Add Frobenius norm
     frobenius = np.linalg.norm(trans_val - trans_syn, ord='fro')
     axes[2].text(0.5, -0.15, f'Frobenius Norm: {frobenius:.4f}',
-                transform=axes[2].transAxes, ha='center',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                transform=axes[2].transAxes, ha='center', color='black',
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8, edgecolor='black'))
 
     plt.tight_layout()
 
@@ -259,21 +283,25 @@ def plot_ngram_comparison(
     ngrams_val = [str(ng) for ng, _ in top_val[:k]]
     counts_val = [cnt for _, cnt in top_val[:k]]
 
-    axes[0].barh(range(k), counts_val, tick_label=ngrams_val)
-    axes[0].set_xlabel('Count')
-    axes[0].set_title(f'Top-{k} Validation {n}-grams')
+    axes[0].barh(range(k), counts_val, tick_label=ngrams_val, color='blue')
+    axes[0].set_xlabel('Count', color='black')
+    axes[0].set_title(f'Top-{k} Validation {n}-grams', color='black')
     axes[0].invert_yaxis()
-    axes[0].grid(True, alpha=0.3)
+    axes[0].tick_params(colors='black')
+    for spine in axes[0].spines.values():
+        spine.set_color('black')
 
     # Synthetic
     ngrams_syn = [str(ng) for ng, _ in top_syn[:k]]
     counts_syn = [cnt for _, cnt in top_syn[:k]]
 
-    axes[1].barh(range(k), counts_syn, tick_label=ngrams_syn)
-    axes[1].set_xlabel('Count')
-    axes[1].set_title(f'Top-{k} Synthetic {n}-grams')
+    axes[1].barh(range(k), counts_syn, tick_label=ngrams_syn, color='orange')
+    axes[1].set_xlabel('Count', color='black')
+    axes[1].set_title(f'Top-{k} Synthetic {n}-grams', color='black')
     axes[1].invert_yaxis()
-    axes[1].grid(True, alpha=0.3)
+    axes[1].tick_params(colors='black')
+    for spine in axes[1].spines.values():
+        spine.set_color('black')
 
     plt.tight_layout()
 
@@ -312,19 +340,29 @@ def plot_correlation_matrices(
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     # Original
-    sns.heatmap(corr_orig_vis, ax=axes[0], cmap='coolwarm', center=0,
-                vmin=-1, vmax=1, square=True, cbar=True)
-    axes[0].set_title('Original Correlation')
+    sns.heatmap(corr_orig_vis, ax=axes[0], cmap='RdBu_r', center=0,
+                vmin=-1, vmax=1, square=True, cbar=True, cbar_kws={'label': ''})
+    axes[0].set_title('Original Correlation', color='black')
+    axes[0].tick_params(colors='black')
+    for spine in axes[0].spines.values():
+        spine.set_color('black')
 
     # Synthetic
-    sns.heatmap(corr_syn_vis, ax=axes[1], cmap='coolwarm', center=0,
-                vmin=-1, vmax=1, square=True, cbar=True)
-    axes[1].set_title('Synthetic Correlation')
+    sns.heatmap(corr_syn_vis, ax=axes[1], cmap='RdBu_r', center=0,
+                vmin=-1, vmax=1, square=True, cbar=True, cbar_kws={'label': ''})
+    axes[1].set_title('Synthetic Correlation', color='black')
+    axes[1].tick_params(colors='black')
+    for spine in axes[1].spines.values():
+        spine.set_color('black')
 
     # Difference
     diff = np.abs(corr_orig_vis - corr_syn_vis)
-    sns.heatmap(diff, ax=axes[2], cmap='Reds', vmin=0, square=True, cbar=True)
-    axes[2].set_title('Absolute Difference')
+    sns.heatmap(diff, ax=axes[2], cmap='Greys', vmin=0, square=True, cbar=True,
+                cbar_kws={'label': ''})
+    axes[2].set_title('Absolute Difference', color='black')
+    axes[2].tick_params(colors='black')
+    for spine in axes[2].spines.values():
+        spine.set_color('black')
 
     plt.tight_layout()
 
