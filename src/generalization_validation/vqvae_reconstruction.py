@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict
 from src.utils.logging import logger
 from .data_loader import load_validation_samples, load_vqvae_model, decode_codes_batch
-from .metrics import compute_ks_tests, compute_correlation_distance
+from .metrics import compute_ks_tests, compute_correlation_distance, compute_cosine_similarity
 from .visualization import plot_umap_comparison, plot_reconstruction_error
 
 
@@ -94,6 +94,12 @@ class VQVAEReconstructionValidator:
         corr_results = compute_correlation_distance(original_vectors, reconstructed_vectors)
         logger(f'  Correlation Frobenius norm: {corr_results["frobenius_norm"]:.6f}', "INFO")
 
+        # Cosine similarity
+        logger('  Computing cosine similarity...', "INFO")
+        cosine_results = compute_cosine_similarity(original_vectors, reconstructed_vectors)
+        logger(f'  Mean cosine similarity: {cosine_results["mean_cosine_similarity"]:.6f}', "INFO")
+        logger(f'  Min cosine similarity: {cosine_results["min_cosine_similarity"]:.6f}', "INFO")
+
         # Visualizations
         split_output_dir = self.output_dir / "experiment1_vqvae_reconstruction" / f"split_{split_id}"
         split_output_dir.mkdir(parents=True, exist_ok=True)
@@ -130,7 +136,12 @@ class VQVAEReconstructionValidator:
             'ks_rejection_rate': float(ks_results['rejection_rate']),
             'corr_frobenius': float(corr_results['frobenius_norm']),
             'corr_mean_abs_diff': float(corr_results['mean_absolute_diff']),
-            'corr_max_abs_diff': float(corr_results['max_absolute_diff'])
+            'corr_max_abs_diff': float(corr_results['max_absolute_diff']),
+            'cosine_similarity_mean': float(cosine_results['mean_cosine_similarity']),
+            'cosine_similarity_std': float(cosine_results['std_cosine_similarity']),
+            'cosine_similarity_min': float(cosine_results['min_cosine_similarity']),
+            'cosine_similarity_max': float(cosine_results['max_cosine_similarity']),
+            'cosine_similarity_median': float(cosine_results['median_cosine_similarity'])
         }
 
         logger(f'  ✓ Split {split_id} validation complete', "INFO")

@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 from collections import Counter
 
 
-def compute_mmd(X: np.ndarray, Y: np.ndarray, kernel: str = 'rbf', gamma: float = None) -> float:
+def compute_mmd(X: np.ndarray, Y: np.ndarray, kernel: str = 'rbf', gamma: float = None, max_samples: int = 5000) -> float:
     """
     Compute Maximum Mean Discrepancy between two distributions.
 
@@ -15,10 +15,20 @@ def compute_mmd(X: np.ndarray, Y: np.ndarray, kernel: str = 'rbf', gamma: float 
         Y: (m_samples, n_features) array
         kernel: Kernel type ('rbf' or 'linear')
         gamma: RBF kernel bandwidth (default: 1/n_features)
+        max_samples: Maximum samples to use (subsample if exceeded to avoid memory issues)
 
     Returns:
         MMD value
     """
+    # Subsample if too many samples (avoid memory issues)
+    if X.shape[0] > max_samples:
+        indices_X = np.random.choice(X.shape[0], max_samples, replace=False)
+        X = X[indices_X]
+
+    if Y.shape[0] > max_samples:
+        indices_Y = np.random.choice(Y.shape[0], max_samples, replace=False)
+        Y = Y[indices_Y]
+
     n = X.shape[0]
     m = Y.shape[0]
 
@@ -295,3 +305,32 @@ def jensen_shannon_divergence(P: np.ndarray, Q: np.ndarray) -> float:
     js = 0.5 * (kl_pm + kl_qm)
 
     return js
+
+
+def compute_cosine_similarity(X: np.ndarray, Y: np.ndarray) -> Dict[str, float]:
+    """
+    Compute cosine similarity between corresponding samples.
+
+    Args:
+        X: (n_samples, n_features) array
+        Y: (n_samples, n_features) array
+
+    Returns:
+        Dictionary with cosine similarity statistics
+    """
+    # Compute per-sample cosine similarity
+    # Normalize each row
+    X_norm = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-10)
+    Y_norm = Y / (np.linalg.norm(Y, axis=1, keepdims=True) + 1e-10)
+
+    # Compute dot product for each sample
+    per_sample_similarity = np.sum(X_norm * Y_norm, axis=1)
+
+    return {
+        'mean_cosine_similarity': float(np.mean(per_sample_similarity)),
+        'std_cosine_similarity': float(np.std(per_sample_similarity)),
+        'min_cosine_similarity': float(np.min(per_sample_similarity)),
+        'max_cosine_similarity': float(np.max(per_sample_similarity)),
+        'median_cosine_similarity': float(np.median(per_sample_similarity)),
+        'per_sample_similarities': per_sample_similarity
+    }
