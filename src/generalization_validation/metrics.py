@@ -252,10 +252,20 @@ def compare_ngrams(
 
     # Compute frequency correlation for common n-grams
     common = val_ngrams & syn_ngrams
-    if len(common) > 0:
+    if len(common) > 1:
         val_freqs = [ngrams_val[ng] for ng in common]
         syn_freqs = [ngrams_syn[ng] for ng in common]
-        freq_corr = np.corrcoef(val_freqs, syn_freqs)[0, 1]
+
+        # Check for zero variance (all values are the same)
+        if np.std(val_freqs) > 0 and np.std(syn_freqs) > 0:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', message='invalid value encountered')
+                warnings.filterwarnings('ignore', message='divide by zero encountered')
+                freq_corr = np.corrcoef(val_freqs, syn_freqs)[0, 1]
+                freq_corr = 0.0 if np.isnan(freq_corr) else freq_corr
+        else:
+            freq_corr = 0.0
     else:
         freq_corr = 0.0
 

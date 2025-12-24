@@ -248,6 +248,10 @@ def main():
 
                         # Log to MLflow
                         mlflow.log_metrics({
+                            'exp1_original_min': exp1_results['original_min'],
+                            'exp1_original_max': exp1_results['original_max'],
+                            'exp1_original_mean': exp1_results['original_mean'],
+                            'exp1_original_std': exp1_results['original_std'],
                             'exp1_mse_overall': exp1_results['mse_overall'],
                             'exp1_ks_rejection_rate': exp1_results['ks_rejection_rate'],
                             'exp1_corr_frobenius_correlation': exp1_results['corr_frobenius_correlation'],
@@ -325,13 +329,26 @@ def main():
             exp1_ks = compute_aggregate_statistics(all_results['exp1'], 'ks_rejection_rate')
             exp1_corr = compute_aggregate_statistics(all_results['exp1'], 'corr_frobenius_correlation')
             exp1_cosine = compute_aggregate_statistics(all_results['exp1'], 'cosine_similarity_mean')
+            exp1_orig_stats = {
+                'min': compute_aggregate_statistics(all_results['exp1'], 'original_min'),
+                'max': compute_aggregate_statistics(all_results['exp1'], 'original_max'),
+                'mean': compute_aggregate_statistics(all_results['exp1'], 'original_mean'),
+                'std': compute_aggregate_statistics(all_results['exp1'], 'original_std')
+            }
 
-            logger(f'  MSE: {exp1_mse["mean"]:.6f} ± {exp1_mse["std"]:.6f}', "INFO")
-            logger(f'  KS Rejection Rate: {exp1_ks["mean"]:.4f} ± {exp1_ks["std"]:.4f}', "INFO")
-            logger(f'  Corr Frobenius Correlation: {exp1_corr["mean"]:.6f} ± {exp1_corr["std"]:.6f}', "INFO")
-            logger(f'  Cosine Similarity: {exp1_cosine["mean"]:.6f} ± {exp1_cosine["std"]:.6f}', "INFO")
+            logger('  Original Data Statistics (across splits):', "INFO")
+            logger(f'    Min: {exp1_orig_stats["min"]["mean"]:.6f} [{exp1_orig_stats["min"]["min"]:.6f}, {exp1_orig_stats["min"]["max"]:.6f}]', "INFO")
+            logger(f'    Max: {exp1_orig_stats["max"]["mean"]:.6f} [{exp1_orig_stats["max"]["min"]:.6f}, {exp1_orig_stats["max"]["max"]:.6f}]', "INFO")
+            logger(f'    Mean: {exp1_orig_stats["mean"]["mean"]:.6f} [{exp1_orig_stats["mean"]["min"]:.6f}, {exp1_orig_stats["mean"]["max"]:.6f}]', "INFO")
+            logger(f'    Std: {exp1_orig_stats["std"]["mean"]:.6f} [{exp1_orig_stats["std"]["min"]:.6f}, {exp1_orig_stats["std"]["max"]:.6f}]', "INFO")
+            logger('  Reconstruction Metrics (across splits):', "INFO")
+            logger(f'    MSE: {exp1_mse["mean"]:.6f} ± {exp1_mse["std"]:.6f} [{exp1_mse["min"]:.6f}, {exp1_mse["max"]:.6f}]', "INFO")
+            logger(f'    KS Rejection Rate: {exp1_ks["mean"]:.4f} ± {exp1_ks["std"]:.4f} [{exp1_ks["min"]:.4f}, {exp1_ks["max"]:.4f}]', "INFO")
+            logger(f'    Corr Frobenius Correlation: {exp1_corr["mean"]:.6f} ± {exp1_corr["std"]:.6f} [{exp1_corr["min"]:.6f}, {exp1_corr["max"]:.6f}]', "INFO")
+            logger(f'    Cosine Similarity: {exp1_cosine["mean"]:.6f} ± {exp1_cosine["std"]:.6f} [{exp1_cosine["min"]:.6f}, {exp1_cosine["max"]:.6f}]', "INFO")
 
             aggregate_stats['exp1'] = {
+                'original_stats': exp1_orig_stats,
                 'mse': exp1_mse,
                 'ks_rejection_rate': exp1_ks,
                 'corr_frobenius_correlation': exp1_corr,
@@ -339,7 +356,13 @@ def main():
             }
 
             mlflow.log_metrics({
+                'agg_exp1_original_min_mean': exp1_orig_stats['min']['mean'],
+                'agg_exp1_original_max_mean': exp1_orig_stats['max']['mean'],
+                'agg_exp1_original_mean_mean': exp1_orig_stats['mean']['mean'],
+                'agg_exp1_original_std_mean': exp1_orig_stats['std']['mean'],
                 'agg_exp1_mse_mean': exp1_mse['mean'],
+                'agg_exp1_mse_min': exp1_mse['min'],
+                'agg_exp1_mse_max': exp1_mse['max'],
                 'agg_exp1_ks_rejection_mean': exp1_ks['mean'],
                 'agg_exp1_corr_frobenius_correlation_mean': exp1_corr['mean'],
                 'agg_exp1_cosine_similarity_mean': exp1_cosine['mean']
@@ -355,10 +378,10 @@ def main():
             exp2_trans_mad = compute_aggregate_statistics(all_results['exp2'], 'transition_mean_abs_diff')
             exp2_bigram = compute_aggregate_statistics(all_results['exp2'], 'bigram_overlap_ratio')
 
-            logger(f'  JS Divergence: {exp2_js["mean"]:.6f} ± {exp2_js["std"]:.6f}', "INFO")
-            logger(f'  Transition Frobenius Correlation: {exp2_trans["mean"]:.6f} ± {exp2_trans["std"]:.6f}', "INFO")
-            logger(f'  Transition Mean Abs Diff: {exp2_trans_mad["mean"]:.6f} ± {exp2_trans_mad["std"]:.6f}', "INFO")
-            logger(f'  Bigram Overlap: {exp2_bigram["mean"]:.4f} ± {exp2_bigram["std"]:.4f}', "INFO")
+            logger(f'  JS Divergence: {exp2_js["mean"]:.6f} ± {exp2_js["std"]:.6f} [{exp2_js["min"]:.6f}, {exp2_js["max"]:.6f}]', "INFO")
+            logger(f'  Transition Frobenius Correlation: {exp2_trans["mean"]:.6f} ± {exp2_trans["std"]:.6f} [{exp2_trans["min"]:.6f}, {exp2_trans["max"]:.6f}]', "INFO")
+            logger(f'  Transition Mean Abs Diff: {exp2_trans_mad["mean"]:.6f} ± {exp2_trans_mad["std"]:.6f} [{exp2_trans_mad["min"]:.6f}, {exp2_trans_mad["max"]:.6f}]', "INFO")
+            logger(f'  Bigram Overlap: {exp2_bigram["mean"]:.4f} ± {exp2_bigram["std"]:.4f} [{exp2_bigram["min"]:.4f}, {exp2_bigram["max"]:.4f}]', "INFO")
 
             aggregate_stats['exp2'] = {
                 'js_divergence': exp2_js,
@@ -383,9 +406,9 @@ def main():
             exp3_ks = compute_aggregate_statistics(all_results['exp3'], 'ks_rejection_rate')
             exp3_corr = compute_aggregate_statistics(all_results['exp3'], 'corr_frobenius_correlation')
 
-            logger(f'  MMD: {exp3_mmd["mean"]:.6f} ± {exp3_mmd["std"]:.6f}', "INFO")
-            logger(f'  KS Rejection Rate: {exp3_ks["mean"]:.4f} ± {exp3_ks["std"]:.4f}', "INFO")
-            logger(f'  Corr Frobenius Correlation: {exp3_corr["mean"]:.6f} ± {exp3_corr["std"]:.6f}', "INFO")
+            logger(f'  MMD: {exp3_mmd["mean"]:.6f} ± {exp3_mmd["std"]:.6f} [{exp3_mmd["min"]:.6f}, {exp3_mmd["max"]:.6f}]', "INFO")
+            logger(f'  KS Rejection Rate: {exp3_ks["mean"]:.4f} ± {exp3_ks["std"]:.4f} [{exp3_ks["min"]:.4f}, {exp3_ks["max"]:.4f}]', "INFO")
+            logger(f'  Corr Frobenius Correlation: {exp3_corr["mean"]:.6f} ± {exp3_corr["std"]:.6f} [{exp3_corr["min"]:.6f}, {exp3_corr["max"]:.6f}]', "INFO")
 
             aggregate_stats['exp3'] = {
                 'mmd': exp3_mmd,

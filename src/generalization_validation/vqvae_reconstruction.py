@@ -51,6 +51,13 @@ class VQVAEReconstructionValidator:
         n_samples = len(original_vectors)
         logger(f'  Validation samples: {n_samples:,}', "INFO")
 
+        # Log original data statistics for liquidity analysis
+        logger('  Original data statistics:', "INFO")
+        logger(f'    Min: {np.min(original_vectors):.6f}', "INFO")
+        logger(f'    Max: {np.max(original_vectors):.6f}', "INFO")
+        logger(f'    Mean: {np.mean(original_vectors):.6f}', "INFO")
+        logger(f'    Std: {np.std(original_vectors):.6f}', "INFO")
+
         # Load VQ-VAE model
         model_path = self.vqvae_model_dir / f"split_{split_id}_model.pth"
         if not model_path.exists():
@@ -126,6 +133,10 @@ class VQVAEReconstructionValidator:
         results = {
             'split_id': split_id,
             'n_samples': n_samples,
+            'original_min': float(np.min(original_vectors)),
+            'original_max': float(np.max(original_vectors)),
+            'original_mean': float(np.mean(original_vectors)),
+            'original_std': float(np.std(original_vectors)),
             'mse_overall': float(mse_overall),
             'mae_overall': float(mae_overall),
             'mse_per_feature_mean': float(np.mean(mse_per_feature)),
