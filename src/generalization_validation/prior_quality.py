@@ -194,7 +194,7 @@ class PriorQualityValidator:
         plot_umap_comparison(
             val_sequences.astype(np.float32),
             syn_sequences.astype(np.float32),
-            title=f'Prior Sequences - Split {split_id}',
+            title='Codebook Index Sequences',
             save_path=split_output_dir / f"umap_sequences_split_{split_id}.png",
             method='umap'
         )

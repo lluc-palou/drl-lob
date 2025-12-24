@@ -184,7 +184,7 @@ def plot_code_frequency(
     axes[0].bar(x + width/2, freq_syn, width, label='Synthetic', alpha=0.7, color=COLORS['significant'])
     axes[0].set_xlabel('Code Index', color='black')
     axes[0].set_ylabel('Frequency', color='black')
-    axes[0].set_title('Code Frequency Distributions', color='black')
+    axes[0].set_title('Codebook Index Empirical Distribution', color='black')
     axes[0].legend()
     axes[0].tick_params(colors='black')
     for spine in axes[0].spines.values():
@@ -267,12 +267,6 @@ def plot_transition_matrix(
     for spine in axes[2].spines.values():
         spine.set_color('black')
 
-    # Add Frobenius norm
-    frobenius = np.linalg.norm(trans_val - trans_syn, ord='fro')
-    axes[2].text(0.5, -0.15, f'Frobenius Norm: {frobenius:.4f}',
-                transform=axes[2].transAxes, ha='center', color='black',
-                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8, edgecolor='black'))
-
     plt.tight_layout()
 
     if save_path:
@@ -299,27 +293,30 @@ def plot_ngram_comparison(
     """
     k = min(len(top_val), len(top_syn), 20)
 
+    # Convert n to descriptive name
+    ngram_name = {2: 'Bigrams', 3: 'Trigrams'}.get(n, f'{n}-grams')
+
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Validation
-    ngrams_val = [str(ng) for ng, _ in top_val[:k]]
+    # Validation - format ngrams as tuples of ints
+    ngrams_val = [str(tuple(int(x) for x in ng)) for ng, _ in top_val[:k]]
     counts_val = [cnt for _, cnt in top_val[:k]]
 
     axes[0].barh(range(k), counts_val, tick_label=ngrams_val, color=COLORS['non_significant'])
     axes[0].set_xlabel('Count', color='black')
-    axes[0].set_title(f'Top-{k} Validation {n}-grams', color='black')
+    axes[0].set_title(f'Validation {ngram_name}', color='black')
     axes[0].invert_yaxis()
     axes[0].tick_params(colors='black')
     for spine in axes[0].spines.values():
         spine.set_color('black')
 
-    # Synthetic
-    ngrams_syn = [str(ng) for ng, _ in top_syn[:k]]
+    # Synthetic - format ngrams as tuples of ints
+    ngrams_syn = [str(tuple(int(x) for x in ng)) for ng, _ in top_syn[:k]]
     counts_syn = [cnt for _, cnt in top_syn[:k]]
 
     axes[1].barh(range(k), counts_syn, tick_label=ngrams_syn, color=COLORS['significant'])
     axes[1].set_xlabel('Count', color='black')
-    axes[1].set_title(f'Top-{k} Synthetic {n}-grams', color='black')
+    axes[1].set_title(f'Synthetic {ngram_name}', color='black')
     axes[1].invert_yaxis()
     axes[1].tick_params(colors='black')
     for spine in axes[1].spines.values():
