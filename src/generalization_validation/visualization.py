@@ -90,8 +90,8 @@ def plot_umap_comparison(
         c=COLORS['significant'], alpha=0.3, s=10, label=label_second, rasterized=True
     )
 
-    ax.set_xlabel(f'{method.upper()} Dimension 1', color='black')
-    ax.set_ylabel(f'{method.upper()} Dimension 2', color='black')
+    ax.set_xlabel(f'{method.upper()} Dimension 1', color='black', fontweight='bold')
+    ax.set_ylabel(f'{method.upper()} Dimension 2', color='black', fontweight='bold')
     ax.set_title(title, color='black', fontweight='bold', pad=15)
     ax.legend()
     ax.tick_params(colors='black')
@@ -128,8 +128,8 @@ def plot_reconstruction_error(
 
     # Bar plot of errors
     axes[0].bar(range(len(reconstruction_errors)), reconstruction_errors, width=1.0, color=COLORS['non_significant'])
-    axes[0].set_xlabel('Feature Index', color='black')
-    axes[0].set_ylabel('MSE', color='black')
+    axes[0].set_xlabel('Feature Index', color='black', fontweight='bold')
+    axes[0].set_ylabel('MSE', color='black', fontweight='bold')
     axes[0].set_title('Per-Feature Reconstruction Error', color='black', fontweight='bold', pad=15)
     axes[0].tick_params(colors='black')
     for spine in axes[0].spines.values():
@@ -137,8 +137,8 @@ def plot_reconstruction_error(
 
     # Histogram of errors
     axes[1].hist(reconstruction_errors, bins=bins, color=COLORS['non_significant'], edgecolor='black')
-    axes[1].set_xlabel('MSE', color='black')
-    axes[1].set_ylabel('Count', color='black')
+    axes[1].set_xlabel('MSE', color='black', fontweight='bold')
+    axes[1].set_ylabel('Count', color='black', fontweight='bold')
     axes[1].set_title('Distribution of Reconstruction Errors', color='black', fontweight='bold', pad=15)
     axes[1].tick_params(colors='black')
     for spine in axes[1].spines.values():
@@ -184,8 +184,8 @@ def plot_code_frequency(
 
     axes[0].bar(x - width/2, freq_val, width, label='Validation', alpha=0.7, color=COLORS['non_significant'])
     axes[0].bar(x + width/2, freq_syn, width, label='Synthetic', alpha=0.7, color=COLORS['significant'])
-    axes[0].set_xlabel('Code Index', color='black')
-    axes[0].set_ylabel('Frequency', color='black')
+    axes[0].set_xlabel('Code Index', color='black', fontweight='bold')
+    axes[0].set_ylabel('Frequency', color='black', fontweight='bold')
     axes[0].set_title('Codebook Index Empirical Distribution', color='black', fontweight='bold', pad=15)
     axes[0].legend()
     axes[0].tick_params(colors='black')
@@ -195,8 +195,8 @@ def plot_code_frequency(
     # Scatter plot for correlation
     axes[1].scatter(freq_val, freq_syn, alpha=0.5, s=30, color=COLORS['non_significant'])
     axes[1].plot([0, freq_val.max()], [0, freq_val.max()], color=COLORS['reference'], linestyle='--', linewidth=2, label='y=x')
-    axes[1].set_xlabel('Validation Frequency', color='black')
-    axes[1].set_ylabel('Synthetic Frequency', color='black')
+    axes[1].set_xlabel('Validation Frequency', color='black', fontweight='bold')
+    axes[1].set_ylabel('Synthetic Frequency', color='black', fontweight='bold')
     axes[1].set_title('Code Frequency Correlation', color='black', fontweight='bold', pad=15)
     axes[1].legend()
     axes[1].tick_params(colors='black')
@@ -242,8 +242,8 @@ def plot_transition_matrix(
     sns.heatmap(trans_val, ax=axes[0], cmap='Blues', vmin=0, vmax=vmax, cbar=True,
                 cbar_kws={'label': ''})
     axes[0].set_title('Validation Transition Matrix', color='black', fontweight='bold', pad=15)
-    axes[0].set_xlabel('To Code', color='black')
-    axes[0].set_ylabel('From Code', color='black')
+    axes[0].set_xlabel('To Code', color='black', fontweight='bold')
+    axes[0].set_ylabel('From Code', color='black', fontweight='bold')
     axes[0].tick_params(colors='black')
     for spine in axes[0].spines.values():
         spine.set_color('black')
@@ -252,8 +252,8 @@ def plot_transition_matrix(
     sns.heatmap(trans_syn, ax=axes[1], cmap='Oranges', vmin=0, vmax=vmax, cbar=True,
                 cbar_kws={'label': ''})
     axes[1].set_title('Synthetic Transition Matrix', color='black', fontweight='bold', pad=15)
-    axes[1].set_xlabel('To Code', color='black')
-    axes[1].set_ylabel('From Code', color='black')
+    axes[1].set_xlabel('To Code', color='black', fontweight='bold')
+    axes[1].set_ylabel('From Code', color='black', fontweight='bold')
     axes[1].tick_params(colors='black')
     for spine in axes[1].spines.values():
         spine.set_color('black')
@@ -263,8 +263,8 @@ def plot_transition_matrix(
     sns.heatmap(diff, ax=axes[2], cmap='Greys', vmin=0, cbar=True,
                 cbar_kws={'label': ''})
     axes[2].set_title('Absolute Difference', color='black', fontweight='bold', pad=15)
-    axes[2].set_xlabel('To Code', color='black')
-    axes[2].set_ylabel('From Code', color='black')
+    axes[2].set_xlabel('To Code', color='black', fontweight='bold')
+    axes[2].set_ylabel('From Code', color='black', fontweight='bold')
     axes[2].tick_params(colors='black')
     for spine in axes[2].spines.values():
         spine.set_color('black')
@@ -305,7 +305,7 @@ def plot_ngram_comparison(
     counts_val = [cnt for _, cnt in top_val[:k]]
 
     axes[0].barh(range(k), counts_val, tick_label=ngrams_val, color=COLORS['non_significant'])
-    axes[0].set_xlabel('Count', color='black')
+    axes[0].set_xlabel('Count', color='black', fontweight='bold')
     axes[0].set_title(f'Validation {ngram_name}', color='black', fontweight='bold', pad=15)
     axes[0].invert_yaxis()
     axes[0].tick_params(colors='black')
@@ -317,7 +317,7 @@ def plot_ngram_comparison(
     counts_syn = [cnt for _, cnt in top_syn[:k]]
 
     axes[1].barh(range(k), counts_syn, tick_label=ngrams_syn, color=COLORS['significant'])
-    axes[1].set_xlabel('Count', color='black')
+    axes[1].set_xlabel('Count', color='black', fontweight='bold')
     axes[1].set_title(f'Synthetic {ngram_name}', color='black', fontweight='bold', pad=15)
     axes[1].invert_yaxis()
     axes[1].tick_params(colors='black')

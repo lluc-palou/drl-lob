@@ -173,8 +173,8 @@ class EndToEndValidator:
             ax.hist(syn_data[:, feat_idx], bins=50, alpha=0.5, label='Synthetic',
                    density=True, color='#D55E00')
 
-            ax.set_xlabel('Value', color='black')
-            ax.set_ylabel('Density', color='black')
+            ax.set_xlabel('Value', color='black', fontweight='bold')
+            ax.set_ylabel('Density', color='black', fontweight='bold')
             ax.set_title(f'Feature {feat_idx}', color='black', fontweight='bold', pad=15)
             ax.legend()
             ax.tick_params(colors='black')
