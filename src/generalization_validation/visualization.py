@@ -1,6 +1,8 @@
 """Visualization utilities for generalization validation."""
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for saving plots without display
 import matplotlib.pyplot as plt
 import seaborn as sns
 from umap import UMAP
