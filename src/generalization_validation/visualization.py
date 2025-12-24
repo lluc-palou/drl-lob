@@ -65,7 +65,7 @@ def plot_umap_comparison(
 
     # Dimensionality reduction
     if method == 'umap':
-        reducer = UMAP(n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
+        reducer = UMAP(n_neighbors=n_neighbors, min_dist=min_dist, random_state=42, n_jobs=1)
     elif method == 'tsne':
         reducer = TSNE(n_components=2, perplexity=perplexity, random_state=42)
     else:
