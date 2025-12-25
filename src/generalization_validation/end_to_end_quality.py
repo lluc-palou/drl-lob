@@ -77,6 +77,21 @@ class EndToEndValidator:
 
         logger('  Computing correlation distance...', "INFO")
         corr_results = compute_correlation_distance(original_vectors, synthetic_vectors)
+
+        # Diagnostic logging for correlation matrices
+        corr_orig = corr_results['corr_original']
+        corr_syn = corr_results['corr_synthetic']
+
+        # Check if correlation matrices are mostly diagonal
+        n_features = corr_orig.shape[0]
+        off_diagonal_orig = np.abs(corr_orig - np.eye(n_features))
+        off_diagonal_syn = np.abs(corr_syn - np.eye(n_features))
+
+        logger(f'  Original corr matrix off-diagonal mean: {off_diagonal_orig.mean():.6f}', "INFO")
+        logger(f'  Original corr matrix off-diagonal max: {off_diagonal_orig.max():.6f}', "INFO")
+        logger(f'  Synthetic corr matrix off-diagonal mean: {off_diagonal_syn.mean():.6f}', "INFO")
+        logger(f'  Synthetic corr matrix off-diagonal max: {off_diagonal_syn.max():.6f}', "INFO")
+
         logger(f'  Correlation Frobenius correlation: {corr_results["frobenius_correlation"]:.6f}', "INFO")
         logger(f'  Mean absolute difference: {corr_results["mean_absolute_diff"]:.6f}', "INFO")
 
@@ -168,13 +183,18 @@ class EndToEndValidator:
             xlim_min = data_min - padding
             xlim_max = data_max + padding
 
-            ax.hist(val_feature, bins=50, alpha=0.5, label='Validation',
+            # Create histograms and get the bin heights for y-axis scaling
+            n_val, bins_val, _ = ax.hist(val_feature, bins=50, alpha=0.5, label='Validation',
                    density=True, color='#0072B2')
-            ax.hist(syn_feature, bins=50, alpha=0.5, label='Synthetic',
+            n_syn, bins_syn, _ = ax.hist(syn_feature, bins=50, alpha=0.5, label='Synthetic',
                    density=True, color='#D55E00')
 
             # Set x-axis limits based on actual data range
             ax.set_xlim(xlim_min, xlim_max)
+
+            # Set y-axis limits based on maximum density value with padding
+            max_density = max(n_val.max(), n_syn.max())
+            ax.set_ylim(0, max_density * 1.1)  # Add 10% padding at top
 
             ax.set_xlabel('Value', color='black', fontweight='bold')
             ax.set_ylabel('Density', color='black', fontweight='bold')

@@ -99,6 +99,21 @@ class VQVAEReconstructionValidator:
         # Correlation distance
         logger('  Computing correlation distance...', "INFO")
         corr_results = compute_correlation_distance(original_vectors, reconstructed_vectors)
+
+        # Diagnostic logging for correlation matrices
+        corr_orig = corr_results['corr_original']
+        corr_recon = corr_results['corr_synthetic']
+
+        # Check if correlation matrices are mostly diagonal
+        n_features = corr_orig.shape[0]
+        off_diagonal_orig = np.abs(corr_orig - np.eye(n_features))
+        off_diagonal_recon = np.abs(corr_recon - np.eye(n_features))
+
+        logger(f'  Original corr matrix off-diagonal mean: {off_diagonal_orig.mean():.6f}', "INFO")
+        logger(f'  Original corr matrix off-diagonal max: {off_diagonal_orig.max():.6f}', "INFO")
+        logger(f'  Reconstructed corr matrix off-diagonal mean: {off_diagonal_recon.mean():.6f}', "INFO")
+        logger(f'  Reconstructed corr matrix off-diagonal max: {off_diagonal_recon.max():.6f}', "INFO")
+
         logger(f'  Correlation Frobenius correlation: {corr_results["frobenius_correlation"]:.6f}', "INFO")
         logger(f'  Mean absolute difference: {corr_results["mean_absolute_diff"]:.6f}', "INFO")
 
