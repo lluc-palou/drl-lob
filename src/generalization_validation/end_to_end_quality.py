@@ -56,21 +56,7 @@ class EndToEndValidator:
         n_val_samples = len(original_vectors)
         logger(f'  Validation samples: {n_val_samples:,}', "INFO")
 
-        # Load VQ-VAE model
-        vqvae_path = self.vqvae_model_dir / f"split_{split_id}_model.pth"
-
-        if not vqvae_path.exists():
-            raise FileNotFoundError(f"VQ-VAE model not found: {vqvae_path}")
-
-        vqvae_model = load_vqvae_model(vqvae_path, self.device)
-
-        # Get validation reconstructions (fair comparison: both go through VQ-VAE)
-        logger('  Decoding validation codes...', "INFO")
-        val_reconstructed = decode_codes_batch(
-            vqvae_model, codebook_indices, self.device, batch_size=512
-        )
-
-        # Load pre-generated synthetic data (already decoded)
+        # Load pre-generated synthetic data
         logger('  Loading synthetic data...', "INFO")
         synthetic_vectors, syn_codebook_indices, _ = load_synthetic_samples(
             self.mongo_uri, self.db_name, split_id
@@ -79,18 +65,18 @@ class EndToEndValidator:
         n_syn_samples = len(synthetic_vectors)
         logger(f'  Synthetic samples: {n_syn_samples:,}', "INFO")
 
-        # Compute metrics
+        # Compute metrics comparing original validation data with synthetic data
         logger('  Computing MMD...', "INFO")
-        mmd = compute_mmd(val_reconstructed, synthetic_vectors, kernel='rbf')
+        mmd = compute_mmd(original_vectors, synthetic_vectors, kernel='rbf')
         logger(f'  MMD: {mmd:.6f}', "INFO")
 
         logger('  Running KS tests...', "INFO")
-        ks_results = compute_ks_tests(val_reconstructed, synthetic_vectors)
+        ks_results = compute_ks_tests(original_vectors, synthetic_vectors)
         logger(f'  Mean KS statistic: {ks_results["mean_ks_statistic"]:.6f}', "INFO")
         logger(f'  Rejection rate: {ks_results["rejection_rate"]:.4f}', "INFO")
 
         logger('  Computing correlation distance...', "INFO")
-        corr_results = compute_correlation_distance(val_reconstructed, synthetic_vectors)
+        corr_results = compute_correlation_distance(original_vectors, synthetic_vectors)
         logger(f'  Correlation Frobenius correlation: {corr_results["frobenius_correlation"]:.6f}', "INFO")
         logger(f'  Mean absolute difference: {corr_results["mean_absolute_diff"]:.6f}', "INFO")
 
@@ -101,7 +87,7 @@ class EndToEndValidator:
         # UMAP visualization
         logger('  Generating UMAP visualization...', "INFO")
         plot_umap_comparison(
-            val_reconstructed, synthetic_vectors,
+            original_vectors, synthetic_vectors,
             title='End-to-End Synthetic Generation',
             save_path=split_output_dir / f"umap_end_to_end_split_{split_id}.png",
             method='umap'
@@ -119,7 +105,7 @@ class EndToEndValidator:
         # Marginal distribution comparisons (sample dimensions)
         logger('  Plotting marginal distributions...', "INFO")
         self._plot_marginals(
-            val_reconstructed, synthetic_vectors,
+            original_vectors, synthetic_vectors,
             save_path=split_output_dir / f"marginals_split_{split_id}.png"
         )
 
