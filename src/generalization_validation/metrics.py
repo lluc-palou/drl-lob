@@ -116,28 +116,42 @@ def compute_ks_tests(X: np.ndarray, Y: np.ndarray) -> Dict[str, float]:
     }
 
 
-def compute_correlation_distance(X: np.ndarray, Y: np.ndarray) -> Dict[str, float]:
+def compute_correlation_distance(X: np.ndarray, Y: np.ndarray, use_clr: bool = True) -> Dict[str, float]:
     """
     Compute distance between correlation matrices.
+
+    For compositional/normalized data (e.g., probability distributions),
+    uses Centered Log-Ratio (CLR) transformation to handle the sum-to-one constraint.
 
     Args:
         X: (n_samples, n_features) array
         Y: (m_samples, n_features) array
+        use_clr: Whether to use CLR transformation for compositional data (default: True)
 
     Returns:
         Dictionary with correlation distances
     """
     import warnings
 
+    # For compositional data (probability distributions), apply CLR transformation
+    # This removes the sum-to-one constraint and allows proper correlation computation
+    if use_clr:
+        X_transformed = _clr_transform(X)
+        Y_transformed = _clr_transform(Y)
+    else:
+        X_transformed = X
+        Y_transformed = Y
+
     # Suppress numpy warning about division by zero in corrcoef when features have zero variance
     # This is expected for constant features (e.g., LOB bins with no variation)
     # We handle NaNs properly by replacing them with 0 after computation
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', message='invalid value encountered in divide')
+        warnings.filterwarnings('ignore', message='invalid value encountered in scalar divide')
 
         # Compute correlation matrices
-        corr_X = np.corrcoef(X, rowvar=False)
-        corr_Y = np.corrcoef(Y, rowvar=False)
+        corr_X = np.corrcoef(X_transformed, rowvar=False)
+        corr_Y = np.corrcoef(Y_transformed, rowvar=False)
 
     # Replace NaNs with 0 (happens when feature is constant/zero variance)
     corr_X = np.nan_to_num(corr_X, nan=0.0)
@@ -169,6 +183,36 @@ def compute_correlation_distance(X: np.ndarray, Y: np.ndarray) -> Dict[str, floa
         'corr_original': corr_X,
         'corr_synthetic': corr_Y
     }
+
+
+def _clr_transform(X: np.ndarray, epsilon: float = 1e-10) -> np.ndarray:
+    """
+    Apply Centered Log-Ratio (CLR) transformation for compositional data.
+
+    The CLR transformation removes the sum-to-one constraint, allowing
+    proper correlation analysis of compositional data like probability distributions.
+
+    CLR(x) = log(x / geometric_mean(x))
+
+    Args:
+        X: (n_samples, n_features) array of compositional data
+        epsilon: Small constant to avoid log(0) (default: 1e-10)
+
+    Returns:
+        X_clr: (n_samples, n_features) CLR-transformed array
+    """
+    # Add small epsilon to avoid log(0)
+    X_safe = X + epsilon
+
+    # Compute geometric mean for each sample
+    # geometric_mean = exp(mean(log(x)))
+    log_X = np.log(X_safe)
+    geometric_mean = np.exp(np.mean(log_X, axis=1, keepdims=True))
+
+    # Apply CLR transformation
+    X_clr = np.log(X_safe / geometric_mean)
+
+    return X_clr
 
 
 def compute_transition_matrix(sequences: np.ndarray, vocab_size: int) -> np.ndarray:
