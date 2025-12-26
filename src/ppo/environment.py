@@ -30,7 +30,7 @@ class EpisodeLoader:
         self.config = config
         self.client = MongoClient(config.mongodb_uri, serverSelectionTimeoutMS=5000)
         self.db = self.client[config.database_name]
-        self.is_synthetic = (config.experiment_type.value == 4)  # Experiment 4 uses synthetic data
+        self.experiment_type = config.experiment_type
         self._ensure_indexes()
     
     def load_episodes(
@@ -41,6 +41,9 @@ class EpisodeLoader:
         """
         Load episodes for a split.
 
+        Experiment 4 uses synthetic data with 80/20 train/val split.
+        All other experiments use original data.
+
         Args:
             split_id: Split identifier
             role: 'train' or 'val'
@@ -48,10 +51,13 @@ class EpisodeLoader:
         Returns:
             List of Episode objects
         """
-        # Route to synthetic loader for Experiment 4
-        if self.is_synthetic:
+        from src.ppo.config import ExperimentType
+
+        # Experiment 4: Use synthetic data (both train and val)
+        if self.experiment_type == ExperimentType.EXP4_CODEBOOK_SYNTHETIC:
             return self._load_synthetic_episodes(split_id, role)
 
+        # All other experiments use original data
         return self._load_original_episodes(split_id, role)
 
     def _load_original_episodes(
@@ -150,14 +156,14 @@ class EpisodeLoader:
             - 100 sequences per split
             - 120 samples per sequence (1 hour at 30-second intervals)
             - Each sequence becomes one episode
-            - Train/val split: 80 sequences (train) / 20 sequences (val)
+            - No role field (we create train/val split with 80/20 ratio)
 
         Args:
             split_id: Split identifier
             role: 'train' or 'val'
 
         Returns:
-            List of Episode objects (each 120 samples long)
+            List of Episode objects (80 for train, 20 for val, each 120 samples long)
         """
         collection = self.db[f'split_{split_id}_synthetic']
 
@@ -175,7 +181,7 @@ class EpisodeLoader:
 
             # Prepare sample
             sample = {
-                'codebook': doc['codebook_index'],  # Note: field is 'codebook_index' in synthetic
+                'codebook': doc['codebook_index'],  # Field is 'codebook_index' in synthetic
                 'features': None,  # No features in synthetic data
                 'timestamp': doc['timestamp'].timestamp() if isinstance(doc['timestamp'], datetime) else doc['timestamp'],
                 'target': 0.0,  # Placeholder - synthetic data has no targets
@@ -185,15 +191,15 @@ class EpisodeLoader:
 
             sequences_by_id[sequence_id].append(sample)
 
-        # Split sequences into train/val
+        # Split sequences into train/val (80/20)
         sequence_ids = sorted(sequences_by_id.keys())
         n_sequences = len(sequence_ids)
-        split_idx = int(0.8 * n_sequences)  # 80/20 split
+        split_idx = int(0.8 * n_sequences)
 
         if role == 'train':
-            selected_ids = sequence_ids[:split_idx]
-        else:  # validation
-            selected_ids = sequence_ids[split_idx:]
+            selected_ids = sequence_ids[:split_idx]  # First 80%
+        else:  # role == 'val'
+            selected_ids = sequence_ids[split_idx:]  # Last 20%
 
         # Create episodes (each sequence is an episode)
         episodes = []

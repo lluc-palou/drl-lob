@@ -8,10 +8,10 @@ import json
 
 class ExperimentType(Enum):
     """Experiment types for PPO training."""
-    EXP1_BOTH_ORIGINAL = 1      # Both codebook + features, original data
-    EXP2_FEATURES_ORIGINAL = 2  # Features only, original data
-    EXP3_CODEBOOK_ORIGINAL = 3  # Codebook only, original data
-    EXP4_CODEBOOK_SYNTHETIC = 4 # Codebook only, synthetic data
+    EXP1_BOTH_ORIGINAL = 1      # Both codebook + features, train/val on original
+    EXP2_FEATURES_ORIGINAL = 2  # Features only, train/val on original
+    EXP3_CODEBOOK_ORIGINAL = 3  # Codebook only, train/val on original
+    EXP4_CODEBOOK_SYNTHETIC = 4 # Codebook only, train/val on synthetic (80/20 split)
 
 
 @dataclass
@@ -30,11 +30,12 @@ class VQVAEConfig:
 class ModelConfig:
     """Transformer architecture configuration.
 
-    Note on synthetic data (Experiment 4):
-        - Synthetic episodes are 120 samples (1 hour at 30s intervals)
-        - window_size=50 gives 25min lookback (41.7% of episode)
-        - horizon=10 gives 5min lookahead
-        - Valid decisions: timesteps [50, 110] = 60 decision points per episode
+    Experiment 4 (synthetic data):
+        - 100 sequences per split → 80 train / 20 val
+        - Each episode: 120 samples (1 hour at 30s intervals)
+        - window_size=50 → 25min lookback (41.7% of episode)
+        - horizon=10 → 5min lookahead
+        - Valid decisions per episode: timesteps [50, 110] = 60 points
     """
     vocab_size: int = 128                # VQ-VAE codebook size (K)
     n_features: int = 18                 # Number of hand-crafted features
