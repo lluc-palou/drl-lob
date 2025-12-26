@@ -386,8 +386,9 @@ def train_epoch(
 
     # Limit episodes per epoch for manageable training
     episodes_to_run = episodes[:MAX_EPISODES_PER_EPOCH]
+    total_episodes = len(episodes_to_run)
 
-    for episode in episodes_to_run:
+    for ep_idx, episode in enumerate(episodes_to_run, 1):
         metrics = run_episode(
             agent, episode, state_buffer, trajectory_buffer, agent_state,
             reward_config, model_config, experiment_type, device, deterministic=False
@@ -401,6 +402,13 @@ def train_epoch(
         epoch_metrics['episode_count'] += 1
         epoch_metrics['avg_episode_length'] += metrics['episode_length']
         episode_returns.append(metrics['total_reward'])
+
+        # Log progress every episode
+        from src.utils.logging import logger
+        logger(f'    Episode {ep_idx}/{total_episodes} - '
+               f'Reward: {metrics["total_reward"]:.4f}, '
+               f'PnL: {metrics["total_pnl"]:.4f}, '
+               f'Steps: {metrics["episode_length"]}', "INFO")
 
         # Perform PPO update if buffer is full
         if trajectory_buffer.is_full():
@@ -458,8 +466,9 @@ def validate_epoch(
     }
 
     episode_returns = []
+    total_episodes = len(episodes)
 
-    for episode in episodes:
+    for ep_idx, episode in enumerate(episodes, 1):
         metrics = run_episode(
             agent, episode, state_buffer, trajectory_buffer, agent_state,
             reward_config, model_config, experiment_type, device, deterministic=True
@@ -472,6 +481,13 @@ def validate_epoch(
         val_metrics['total_pnl'] += metrics['total_pnl']
         val_metrics['episode_count'] += 1
         episode_returns.append(metrics['total_reward'])
+
+        # Log progress every episode
+        from src.utils.logging import logger
+        logger(f'    Episode {ep_idx}/{total_episodes} - '
+               f'Reward: {metrics["total_reward"]:.4f}, '
+               f'PnL: {metrics["total_pnl"]:.4f}, '
+               f'Steps: {metrics["episode_length"]}', "INFO")
 
     # Compute averages
     if val_metrics['episode_count'] > 0:

@@ -85,7 +85,11 @@ class ActorCriticTransformer(nn.Module):
             batch_first=True,
             norm_first=True  # Pre-LN for better training stability
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=config.n_layers,
+            enable_nested_tensor=False  # Disabled because norm_first=True
+        )
         
         # Actor head (policy)
         self.actor_mean = nn.Linear(config.d_model, 1)
@@ -289,7 +293,11 @@ class ActorCriticFeatures(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=config.n_layers,
+            enable_nested_tensor=False  # Disabled because norm_first=True
+        )
 
         # Actor head (policy)
         self.actor_mean = nn.Linear(config.d_model, 1)
@@ -474,7 +482,11 @@ class ActorCriticCodebook(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=config.n_layers,
+            enable_nested_tensor=False  # Disabled because norm_first=True
+        )
 
         # Actor head (policy)
         self.actor_mean = nn.Linear(config.d_model, 1)
