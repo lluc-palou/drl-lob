@@ -443,7 +443,7 @@ class ActorCriticFeatures(nn.Module):
 
 
 class ActorCriticCodebook(nn.Module):
-    """Transformer-based actor-critic using ONLY codebook - Experiments 3 & 4.
+    """Transformer-based actor-critic using ONLY codebook - Experiment 3.
 
     Architecture using only VQ-VAE codebook indices:
         - vocab_size=128 (VQ-VAE codebook size K)

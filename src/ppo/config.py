@@ -11,7 +11,6 @@ class ExperimentType(Enum):
     EXP1_BOTH_ORIGINAL = 1      # Both codebook + features, train/val on original
     EXP2_FEATURES_ORIGINAL = 2  # Features only, train/val on original
     EXP3_CODEBOOK_ORIGINAL = 3  # Codebook only, train/val on original
-    EXP4_CODEBOOK_SYNTHETIC = 4 # Codebook only, train/val on synthetic (80/20 split)
 
 
 @dataclass
@@ -28,15 +27,7 @@ class VQVAEConfig:
 
 @dataclass
 class ModelConfig:
-    """Transformer architecture configuration.
-
-    Experiment 4 (synthetic data):
-        - 100 sequences per split → 80 train / 20 val
-        - Each episode: 120 samples (1 hour at 30s intervals)
-        - window_size=50 → 25min lookback (41.7% of episode)
-        - horizon=10 → 5min lookahead
-        - Valid decisions per episode: timesteps [50, 110] = 60 points
-    """
+    """Transformer architecture configuration."""
     vocab_size: int = 128                # VQ-VAE codebook size (K)
     n_features: int = 18                 # Number of hand-crafted features
     d_codebook: int = 64                 # Codebook embedding dimension

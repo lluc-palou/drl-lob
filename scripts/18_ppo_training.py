@@ -270,8 +270,8 @@ def run_episode(
                     features, timestamps,
                     deterministic=deterministic
                 )
-            else:  # EXP3_CODEBOOK_ORIGINAL or EXP4_CODEBOOK_SYNTHETIC
-                # Experiments 3 & 4: Codebook only
+            else:  # EXP3_CODEBOOK_ORIGINAL
+                # Experiment 3: Codebook only
                 action, log_prob, value = agent.act(
                     codebooks, timestamps,
                     deterministic=deterministic
@@ -524,7 +524,7 @@ def train_split(
         agent = ActorCriticTransformer(config.model).to(device)
     elif experiment_type == ExperimentType.EXP2_FEATURES_ORIGINAL:
         agent = ActorCriticFeatures(config.model).to(device)
-    else:  # EXP3_CODEBOOK_ORIGINAL or EXP4_CODEBOOK_SYNTHETIC
+    else:  # EXP3_CODEBOOK_ORIGINAL
         agent = ActorCriticCodebook(config.model).to(device)
 
     optimizer = optim.Adam(
@@ -612,25 +612,24 @@ def main():
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='PPO Agent Training with Different Experiments')
-    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3, 4],
+    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3],
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
-                             '3=Codebook only (original), 4=Codebook only (synthetic). '
-                             'If not specified, runs all 4 experiments sequentially.')
+                             '3=Codebook only (original). '
+                             'If not specified, runs all 3 experiments sequentially.')
     args = parser.parse_args()
 
     # Determine which experiments to run
     if args.experiment is not None:
         experiments_to_run = [args.experiment]
     else:
-        # Run all 4 experiments by default
-        experiments_to_run = [1, 2, 3, 4]
+        # Run all 3 experiments by default
+        experiments_to_run = [1, 2, 3]
 
     # Map experiment number to enum
     experiment_mapping = {
         1: ExperimentType.EXP1_BOTH_ORIGINAL,
         2: ExperimentType.EXP2_FEATURES_ORIGINAL,
-        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL,
-        4: ExperimentType.EXP4_CODEBOOK_SYNTHETIC
+        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL
     }
 
     # Setup device

@@ -39,10 +39,7 @@ class EpisodeLoader:
         role: str = 'train'
     ) -> List[Episode]:
         """
-        Load episodes for a split.
-
-        Experiment 4 uses synthetic data with 80/20 train/val split.
-        All other experiments use original data.
+        Load episodes for a split from original data.
 
         Args:
             split_id: Split identifier
@@ -51,13 +48,6 @@ class EpisodeLoader:
         Returns:
             List of Episode objects
         """
-        from src.ppo.config import ExperimentType
-
-        # Experiment 4: Use synthetic data (both train and val)
-        if self.experiment_type == ExperimentType.EXP4_CODEBOOK_SYNTHETIC:
-            return self._load_synthetic_episodes(split_id, role)
-
-        # All other experiments use original data
         return self._load_original_episodes(split_id, role)
 
     def _load_original_episodes(
@@ -142,92 +132,6 @@ class EpisodeLoader:
                 # Single fold, create one episode
                 episodes.append(Episode(split_id, date, samples))
         
-        return episodes
-
-    def _load_synthetic_episodes(
-        self,
-        split_id: int,
-        role: str
-    ) -> List[Episode]:
-        """
-        Load episodes from synthetic data (Experiment 4).
-
-        Synthetic data structure:
-            - 100 sequences per split
-            - 120 samples per sequence (1 hour at 30-second intervals)
-            - Each sequence becomes one episode
-            - No role field (we create train/val split with 80/20 ratio)
-
-        Args:
-            split_id: Split identifier
-            role: 'train' or 'val'
-
-        Returns:
-            List of Episode objects (80 for train, 20 for val, each 120 samples long)
-        """
-        collection = self.db[f'split_{split_id}_synthetic']
-
-        # Query all synthetic samples sorted by sequence_id and position
-        cursor = collection.find(
-            {'is_synthetic': True},
-            sort=[('sequence_id', 1), ('position_in_sequence', 1)]
-        )
-
-        # Group samples by sequence_id
-        sequences_by_id = defaultdict(list)
-
-        for doc in cursor:
-            sequence_id = doc['sequence_id']
-
-            # Prepare sample
-            sample = {
-                'codebook': doc['codebook_index'],  # Field is 'codebook_index' in synthetic
-                'features': None,  # No features in synthetic data
-                'timestamp': doc['timestamp'].timestamp() if isinstance(doc['timestamp'], datetime) else doc['timestamp'],
-                'target': 0.0,  # Placeholder - synthetic data has no targets
-                'fold_id': 0,  # No fold concept in synthetic data
-                'position_in_sequence': doc['position_in_sequence']
-            }
-
-            sequences_by_id[sequence_id].append(sample)
-
-        # Split sequences into train/val (80/20)
-        sequence_ids = sorted(sequences_by_id.keys())
-        n_sequences = len(sequence_ids)
-        split_idx = int(0.8 * n_sequences)
-
-        if role == 'train':
-            selected_ids = sequence_ids[:split_idx]  # First 80%
-        else:  # role == 'val'
-            selected_ids = sequence_ids[split_idx:]  # Last 20%
-
-        # Create episodes (each sequence is an episode)
-        episodes = []
-        expected_length = 120  # Each synthetic sequence should be 120 samples
-
-        for seq_id in selected_ids:
-            samples = sequences_by_id[seq_id]
-
-            # Sort by position_in_sequence to ensure correct order
-            samples.sort(key=lambda s: s['position_in_sequence'])
-
-            # Validate sequence length
-            if len(samples) != expected_length:
-                from src.utils.logging import logger
-                logger(f'WARNING: Synthetic sequence {seq_id} has {len(samples)} samples, '
-                       f'expected {expected_length}. Skipping.', "WARNING")
-                continue
-
-            # Remove position_in_sequence field (not needed after sorting)
-            for sample in samples:
-                del sample['position_in_sequence']
-
-            # Use sequence_id as "date" for Episode
-            from datetime import date
-            synthetic_date = date(2024, 1, 1)  # Placeholder date
-
-            episodes.append(Episode(split_id, synthetic_date, samples))
-
         return episodes
 
     def _ensure_indexes(self):
