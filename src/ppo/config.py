@@ -28,7 +28,14 @@ class VQVAEConfig:
 
 @dataclass
 class ModelConfig:
-    """Transformer architecture configuration."""
+    """Transformer architecture configuration.
+
+    Note on synthetic data (Experiment 4):
+        - Synthetic episodes are 120 samples (1 hour at 30s intervals)
+        - window_size=50 gives 25min lookback (41.7% of episode)
+        - horizon=10 gives 5min lookahead
+        - Valid decisions: timesteps [50, 110] = 60 decision points per episode
+    """
     vocab_size: int = 128                # VQ-VAE codebook size (K)
     n_features: int = 18                 # Number of hand-crafted features
     d_codebook: int = 64                 # Codebook embedding dimension

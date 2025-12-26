@@ -146,15 +146,18 @@ class EpisodeLoader:
         """
         Load episodes from synthetic data (Experiment 4).
 
-        Synthetic data is organized by sequence_id (120 samples each).
-        For training, use first 80% of sequences; for validation, use last 20%.
+        Synthetic data structure:
+            - 100 sequences per split
+            - 120 samples per sequence (1 hour at 30-second intervals)
+            - Each sequence becomes one episode
+            - Train/val split: 80 sequences (train) / 20 sequences (val)
 
         Args:
             split_id: Split identifier
             role: 'train' or 'val'
 
         Returns:
-            List of Episode objects
+            List of Episode objects (each 120 samples long)
         """
         collection = self.db[f'split_{split_id}_synthetic']
 
@@ -194,11 +197,20 @@ class EpisodeLoader:
 
         # Create episodes (each sequence is an episode)
         episodes = []
+        expected_length = 120  # Each synthetic sequence should be 120 samples
+
         for seq_id in selected_ids:
             samples = sequences_by_id[seq_id]
 
             # Sort by position_in_sequence to ensure correct order
             samples.sort(key=lambda s: s['position_in_sequence'])
+
+            # Validate sequence length
+            if len(samples) != expected_length:
+                from src.utils.logging import logger
+                logger(f'WARNING: Synthetic sequence {seq_id} has {len(samples)} samples, '
+                       f'expected {expected_length}. Skipping.', "WARNING")
+                continue
 
             # Remove position_in_sequence field (not needed after sorting)
             for sample in samples:

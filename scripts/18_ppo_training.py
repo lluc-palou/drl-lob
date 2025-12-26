@@ -515,7 +515,7 @@ def train_split(
     logger(f'  Loaded {len(train_episodes)} training episodes', "INFO")
 
     logger('Loading validation episodes...', "INFO")
-    val_episodes = episode_loader.load_episodes(split_id, role='validation')
+    val_episodes = episode_loader.load_episodes(split_id, role='val')
     logger(f'  Loaded {len(val_episodes)} validation episodes', "INFO")
 
     # Initialize agent based on experiment type
