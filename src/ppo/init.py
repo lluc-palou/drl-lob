@@ -1,6 +1,6 @@
 """RL Agent module for limit order book trading."""
 
-from .model import ActorCriticTransformer
+from .model import ActorCriticTransformer, ActorCriticFeatures, ActorCriticCodebook
 from .buffer import StateBuffer, TrajectoryBuffer, AgentState, Transition
 from .ppo import ppo_update, compute_gae
 from .environment import Episode, EpisodeLoader, get_valid_timesteps
@@ -27,6 +27,8 @@ from .config import (
 
 __all__ = [
     'ActorCriticTransformer',
+    'ActorCriticFeatures',
+    'ActorCriticCodebook',
     'StateBuffer',
     'TrajectoryBuffer',
     'AgentState',
