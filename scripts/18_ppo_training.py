@@ -612,10 +612,18 @@ def main():
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='PPO Agent Training with Different Experiments')
-    parser.add_argument('--experiment', type=int, default=1, choices=[1, 2, 3, 4],
+    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3, 4],
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
-                             '3=Codebook only (original), 4=Codebook only (synthetic)')
+                             '3=Codebook only (original), 4=Codebook only (synthetic). '
+                             'If not specified, runs all 4 experiments sequentially.')
     args = parser.parse_args()
+
+    # Determine which experiments to run
+    if args.experiment is not None:
+        experiments_to_run = [args.experiment]
+    else:
+        # Run all 4 experiments by default
+        experiments_to_run = [1, 2, 3, 4]
 
     # Map experiment number to enum
     experiment_mapping = {
@@ -624,12 +632,6 @@ def main():
         3: ExperimentType.EXP3_CODEBOOK_ORIGINAL,
         4: ExperimentType.EXP4_CODEBOOK_SYNTHETIC
     }
-    selected_experiment = experiment_mapping[args.experiment]
-
-    logger('=' * 100, "INFO")
-    logger(f'PPO AGENT TRAINING - EXPERIMENT {args.experiment} (STAGE 18)', "INFO")
-    logger('=' * 100, "INFO")
-    logger(f'Experiment: {selected_experiment.name}', "INFO")
 
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -665,66 +667,86 @@ def main():
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Create experiment config with selected experiment type
-    config = ExperimentConfig(
-        name=f"ppo_exp{args.experiment}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        model=ModelConfig(window_size=WINDOW_SIZE, horizon=HORIZON),
-        ppo=PPOConfig(),
-        reward=RewardConfig(),
-        training=TrainingConfig(device=str(device)),
-        data=DataConfig(
-            database_name=DB_NAME,
-            split_ids=split_ids,
-            experiment_type=selected_experiment
-        )
-    )
+    # Run each experiment
+    for exp_num in experiments_to_run:
+        selected_experiment = experiment_mapping[exp_num]
 
-    # Save config
-    config_path = ARTIFACT_BASE_DIR / "experiment_config.json"
-    config.save(str(config_path))
-    logger(f'Experiment config saved to: {config_path}', "INFO")
-
-    # Main training loop
-    with mlflow.start_run(run_name=config.name):
-        # Log configuration
-        mlflow.log_params(config.to_dict())
-        mlflow.log_artifact(str(config_path))
-
-        # Train on each split
-        all_results = {}
-
-        for split_id in split_ids:
-            logger('', "INFO")
-            logger('=' * 100, "INFO")
-            logger(f'SPLIT {split_id}', "INFO")
-            logger('=' * 100, "INFO")
-
-            with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
-                mlflow.log_param("split_id", split_id)
-
-                results = train_split(split_id, config, device)
-                all_results[split_id] = results
-
-                mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
-                mlflow.log_metric("epochs_trained", results['epochs_trained'])
-
-                logger('', "INFO")
-                logger(f'Split {split_id} complete:', "INFO")
-                logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
-                logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
-
-        # Summary
         logger('', "INFO")
         logger('=' * 100, "INFO")
-        logger('TRAINING COMPLETE', "INFO")
+        logger(f'PPO AGENT TRAINING - EXPERIMENT {exp_num} (STAGE 18)', "INFO")
         logger('=' * 100, "INFO")
+        logger(f'Experiment: {selected_experiment.name}', "INFO")
 
-        avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
-        logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
-        logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
-        logger(f'MLflow tracking: {MLFLOW_TRACKING_URI}', "INFO")
+        # Create experiment config with selected experiment type
+        config = ExperimentConfig(
+            name=f"ppo_exp{exp_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            model=ModelConfig(window_size=WINDOW_SIZE, horizon=HORIZON),
+            ppo=PPOConfig(),
+            reward=RewardConfig(),
+            training=TrainingConfig(device=str(device)),
+            data=DataConfig(
+                database_name=DB_NAME,
+                split_ids=split_ids,
+                experiment_type=selected_experiment
+            )
+        )
 
-        mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
+        # Save config
+        exp_artifact_dir = ARTIFACT_BASE_DIR / f"experiment_{exp_num}"
+        exp_artifact_dir.mkdir(parents=True, exist_ok=True)
+        config_path = exp_artifact_dir / "experiment_config.json"
+        config.save(str(config_path))
+        logger(f'Experiment config saved to: {config_path}', "INFO")
+
+        # Main training loop for this experiment
+        with mlflow.start_run(run_name=config.name):
+            # Log configuration
+            mlflow.log_params(config.to_dict())
+            mlflow.log_artifact(str(config_path))
+
+            # Train on each split
+            all_results = {}
+
+            for split_id in split_ids:
+                logger('', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'SPLIT {split_id}', "INFO")
+                logger('=' * 100, "INFO")
+
+                with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
+                    mlflow.log_param("split_id", split_id)
+                    mlflow.log_param("experiment_type", exp_num)
+
+                    results = train_split(split_id, config, device)
+                    all_results[split_id] = results
+
+                    mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
+                    mlflow.log_metric("epochs_trained", results['epochs_trained'])
+
+                    logger('', "INFO")
+                    logger(f'Split {split_id} complete:', "INFO")
+                    logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
+                    logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
+
+            # Summary for this experiment
+            logger('', "INFO")
+            logger('=' * 100, "INFO")
+            logger(f'EXPERIMENT {exp_num} COMPLETE', "INFO")
+            logger('=' * 100, "INFO")
+
+            avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
+            logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
+            logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
+
+            mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
+
+    # Final summary
+    logger('', "INFO")
+    logger('=' * 100, "INFO")
+    logger('ALL EXPERIMENTS COMPLETE', "INFO")
+    logger('=' * 100, "INFO")
+    logger(f'Completed {len(experiments_to_run)} experiment(s)', "INFO")
+    logger(f'MLflow tracking: {MLFLOW_TRACKING_URI}', "INFO")
 
 
 if __name__ == "__main__":
