@@ -124,7 +124,7 @@ LOG_DIR = ARTIFACT_BASE_DIR / "logs"
 # Training configuration
 WINDOW_SIZE = 50  # Observation window (W samples)
 HORIZON = 10      # Reward horizon (H samples)
-MAX_EPISODES_PER_EPOCH = 50  # Limit episodes per epoch for manageable training
+MAX_EPISODES_PER_EPOCH = 20  # Limit episodes per epoch for manageable training (reduced from 50)
 
 # =================================================================================================
 # Helper Functions
@@ -632,6 +632,12 @@ def main():
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
                              '3=Codebook only (original). '
                              'If not specified, runs all 3 experiments sequentially.')
+    parser.add_argument('--splits', type=str, default=None,
+                        help='Comma-separated list of split IDs to train (e.g., "0,1,2"). '
+                             'If not specified, trains on all available splits.')
+    parser.add_argument('--max-splits', type=int, default=None,
+                        help='Maximum number of splits to train on (uses first N splits). '
+                             'Useful for quick testing.')
     args = parser.parse_args()
 
     # Determine which experiments to run
@@ -666,6 +672,20 @@ def main():
         raise ValueError(f"No splits found in database '{DB_NAME}'")
 
     logger(f'Found {len(split_ids)} splits: {split_ids}', "INFO")
+
+    # Filter splits based on command-line arguments
+    if args.splits is not None:
+        # User specified exact splits to run
+        requested_splits = [int(s.strip()) for s in args.splits.split(',')]
+        split_ids = [s for s in split_ids if s in requested_splits]
+        logger(f'Using user-specified splits: {split_ids}', "INFO")
+    elif args.max_splits is not None:
+        # Limit to first N splits
+        split_ids = split_ids[:args.max_splits]
+        logger(f'Limiting to first {args.max_splits} splits: {split_ids}', "INFO")
+
+    if not split_ids:
+        raise ValueError("No splits selected after filtering")
 
     # Ensure indexes
     ensure_indexes(MONGO_URI, DB_NAME, split_ids)
@@ -712,6 +732,20 @@ def main():
         config_path = exp_artifact_dir / "experiment_config.json"
         config.save(str(config_path))
         logger(f'Experiment config saved to: {config_path}', "INFO")
+
+        # Log training configuration
+        logger('', "INFO")
+        logger('Training Configuration:', "INFO")
+        logger(f'  Max epochs: {config.training.max_epochs}', "INFO")
+        logger(f'  Episodes per epoch: {MAX_EPISODES_PER_EPOCH}', "INFO")
+        logger(f'  Splits to train: {len(split_ids)}', "INFO")
+        logger(f'  Early stopping patience: {config.training.patience} epochs', "INFO")
+
+        # Estimate training time (assuming ~480s per epoch based on 20 episodes)
+        estimated_time_per_split = (config.training.max_epochs * 480) / 3600  # hours
+        total_estimated_time = estimated_time_per_split * len(split_ids)
+        logger(f'  Estimated time per split: ~{estimated_time_per_split:.1f} hours', "INFO")
+        logger(f'  Total estimated time: ~{total_estimated_time:.1f} hours', "INFO")
 
         # Main training loop for this experiment
         with mlflow.start_run(run_name=config.name):

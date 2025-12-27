@@ -105,7 +105,7 @@ class RewardConfig:
 @dataclass
 class TrainingConfig:
     """Training procedure configuration."""
-    max_epochs: int = 100                # Maximum training epochs
+    max_epochs: int = 50                 # Maximum training epochs (reduced from 100)
     patience: int = 10                   # Early stopping patience
     min_delta: float = 0.5               # Minimum improvement for early stopping
     validate_every: int = 1              # Validate every N epochs
