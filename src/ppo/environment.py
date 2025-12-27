@@ -65,11 +65,14 @@ class EpisodeLoader:
         Returns:
             List of Episode objects
         """
+        # Map 'val' to 'validation' for database query (DB uses 'validation', not 'val')
+        db_role = 'validation' if role == 'val' else role
+
         collection = self.db[f'split_{split_id}_input']  # Match VQVAE output naming convention
-        
+
         # Query samples with role filter, sorted by timestamp
         cursor = collection.find(
-            {'role': role},
+            {'role': db_role},
             sort=[('timestamp', 1)]
         )
         
