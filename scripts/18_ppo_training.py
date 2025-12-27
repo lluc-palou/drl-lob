@@ -124,7 +124,7 @@ LOG_DIR = ARTIFACT_BASE_DIR / "logs"
 # Training configuration
 WINDOW_SIZE = 50  # Observation window (W samples)
 HORIZON = 10      # Reward horizon (H samples)
-MAX_EPISODES_PER_EPOCH = 20  # Limit episodes per epoch for manageable training (reduced from 50)
+MAX_EPISODES_PER_EPOCH = 10  # Limit episodes per epoch for fast training (reduced from 20)
 
 # =================================================================================================
 # Helper Functions
@@ -741,11 +741,14 @@ def main():
         logger(f'  Splits to train: {len(split_ids)}', "INFO")
         logger(f'  Early stopping patience: {config.training.patience} epochs', "INFO")
 
-        # Estimate training time (assuming ~480s per epoch based on 20 episodes)
-        estimated_time_per_split = (config.training.max_epochs * 480) / 3600  # hours
-        total_estimated_time = estimated_time_per_split * len(split_ids)
-        logger(f'  Estimated time per split: ~{estimated_time_per_split:.1f} hours', "INFO")
-        logger(f'  Total estimated time: ~{total_estimated_time:.1f} hours', "INFO")
+        # Estimate training time (assuming ~300s per epoch based on 10 episodes)
+        # Note: Early stopping (patience=5) will likely reduce actual time by 50-70%
+        estimated_time_per_split_max = (config.training.max_epochs * 300) / 3600  # hours (worst case)
+        estimated_time_per_split_typical = (10 * 300) / 3600  # hours (with early stopping)
+        total_estimated_time_max = estimated_time_per_split_max * len(split_ids)
+        total_estimated_time_typical = estimated_time_per_split_typical * len(split_ids)
+        logger(f'  Estimated time per split: ~{estimated_time_per_split_typical:.1f}h (typical) to {estimated_time_per_split_max:.1f}h (max)', "INFO")
+        logger(f'  Total estimated time: ~{total_estimated_time_typical:.1f}h (typical) to {total_estimated_time_max:.1f}h (max)', "INFO")
 
         # Main training loop for this experiment
         with mlflow.start_run(run_name=config.name):
