@@ -134,6 +134,14 @@ class AgentState:
         self.max_position = 0.0
         self.total_reward = 0.0
 
+        # Position tracking
+        self.sum_abs_position = 0.0  # For mean absolute position
+
+        # Volatility tracking
+        self.sum_volatility = 0.0
+        self.min_volatility = float('inf')
+        self.max_volatility = float('-inf')
+
         # Current unrealized
         self.unrealized_pnl = 0.0
     
@@ -144,7 +152,8 @@ class AgentState:
         transaction_cost: float,
         reward: float,
         unrealized_pnl: float,
-        gross_pnl: float = 0.0  # NEW: Gross PnL from current timestep
+        gross_pnl: float = 0.0,  # NEW: Gross PnL from current timestep
+        volatility: float = 0.0  # NEW: Volatility value for tracking
     ):
         """
         Update agent state after taking action.
@@ -156,6 +165,7 @@ class AgentState:
             reward: Reward received
             unrealized_pnl: Expected PnL from new position
             gross_pnl: Gross PnL from current position (before TC)
+            volatility: Volatility value used for position scaling
         """
         # Realized PnL from previous position
         realized_this_step = self.current_position * log_return
@@ -182,8 +192,14 @@ class AgentState:
         self.max_pnl = max(self.max_pnl, net_pnl)
         self.min_pnl = min(self.min_pnl, net_pnl)
         self.max_position = max(self.max_position, abs(action))
+        self.sum_abs_position += abs(action)
         self.total_reward += reward
         self.step_count += 1
+
+        # Track volatility
+        self.sum_volatility += abs(volatility)
+        self.min_volatility = min(self.min_volatility, abs(volatility))
+        self.max_volatility = max(self.max_volatility, abs(volatility))
     
     def get_metrics(self) -> Dict[str, float]:
         """Get episode metrics."""
@@ -195,6 +211,12 @@ class AgentState:
         avg_tc_per_trade = self.cumulative_tc / max(self.trade_count, 1)
         pnl_to_cost_ratio = self.cumulative_gross_pnl / self.cumulative_tc if self.cumulative_tc > 1e-8 else 0.0
 
+        # Position metrics
+        mean_abs_position = self.sum_abs_position / max(self.step_count, 1)
+
+        # Volatility metrics
+        mean_volatility = self.sum_volatility / max(self.step_count, 1)
+
         return {
             'net_realized_pnl': net_pnl,
             'cumulative_tc': self.cumulative_tc,
@@ -204,13 +226,18 @@ class AgentState:
             'trade_frequency': self.trade_count / max(self.step_count, 1),
             'max_drawdown': self.max_pnl - self.min_pnl,
             'max_position': self.max_position,
+            'mean_abs_position': mean_abs_position,
             'total_reward': self.total_reward,
             'avg_reward': self.total_reward / max(self.step_count, 1),
             # NEW: Gross PnL metrics
             'cumulative_gross_pnl': self.cumulative_gross_pnl,
             'avg_gross_pnl_per_trade': avg_gross_pnl_per_trade,
             'avg_tc_per_trade': avg_tc_per_trade,
-            'pnl_to_cost_ratio': pnl_to_cost_ratio
+            'pnl_to_cost_ratio': pnl_to_cost_ratio,
+            # NEW: Volatility metrics
+            'mean_volatility': mean_volatility,
+            'min_volatility': self.min_volatility,
+            'max_volatility': self.max_volatility
         }
     
     def reset(self):

@@ -311,7 +311,7 @@ def run_episode(
             log_return = episode.samples[t - 1]['target']
 
         # Update agent state with scaled position
-        agent_state.update(position_curr, log_return, tc, reward, unrealized, gross_pnl)
+        agent_state.update(position_curr, log_return, tc, reward, unrealized, gross_pnl, volatility)
         episode_returns.append(reward)
 
         # Check if episode should end
@@ -405,10 +405,10 @@ def train_epoch(
                f'Reward: {metrics["total_reward"]:.4f}, '
                f'PnL: {metrics["total_pnl"]:.4f}, '
                f'Trades: {metrics["trade_count"]} ({metrics["trade_frequency"]:.2%}), '
-               f'Max|Pos|: {metrics["max_position"]:.4f}, '
+               f'Pos[μ={metrics["mean_abs_position"]:.4f}, max={metrics["max_position"]:.4f}], '
+               f'Vol[μ={metrics["mean_volatility"]:.4f}, range=[{metrics["min_volatility"]:.4f},{metrics["max_volatility"]:.4f}]], '
                f'Gross PnL/Trade: {metrics["avg_gross_pnl_per_trade"]:.6f}, '
                f'TC/Trade: {metrics["avg_tc_per_trade"]:.6f}, '
-               f'PnL/TC: {metrics["pnl_to_cost_ratio"]:.2f}, '
                f'Steps: {metrics["episode_length"]}', "INFO")
 
         # Perform PPO update if buffer is full
@@ -489,10 +489,10 @@ def validate_epoch(
                f'Reward: {metrics["total_reward"]:.4f}, '
                f'PnL: {metrics["total_pnl"]:.4f}, '
                f'Trades: {metrics["trade_count"]} ({metrics["trade_frequency"]:.2%}), '
-               f'Max|Pos|: {metrics["max_position"]:.4f}, '
+               f'Pos[μ={metrics["mean_abs_position"]:.4f}, max={metrics["max_position"]:.4f}], '
+               f'Vol[μ={metrics["mean_volatility"]:.4f}, range=[{metrics["min_volatility"]:.4f},{metrics["max_volatility"]:.4f}]], '
                f'Gross PnL/Trade: {metrics["avg_gross_pnl_per_trade"]:.6f}, '
                f'TC/Trade: {metrics["avg_tc_per_trade"]:.6f}, '
-               f'PnL/TC: {metrics["pnl_to_cost_ratio"]:.2f}, '
                f'Steps: {metrics["episode_length"]}', "INFO")
 
     # Compute averages
