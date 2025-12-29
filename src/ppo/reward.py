@@ -9,7 +9,7 @@ def compute_policy_based_position(
     action_std: float,
     confidence_weight: float = 1.0,
     min_std: float = 0.1,
-    max_std: float = 3.0
+    max_std: float = 100.0
 ) -> float:
     """
     Compute position using agent's policy distribution (action mean and std).
@@ -27,7 +27,7 @@ def compute_policy_based_position(
         action_std: Policy standard deviation (agent's uncertainty)
         confidence_weight: How strongly std affects position size (default: 1.0)
         min_std: Minimum expected std for scaling (default: 0.1)
-        max_std: Maximum expected std for capping (default: 3.0)
+        max_std: Maximum expected std for capping (default: 100.0, effectively uncapped)
 
     Returns:
         Position in range approximately [-1, 1]
