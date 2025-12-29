@@ -7,28 +7,35 @@ from typing import Optional
 def compute_volatility_scaled_position(
     action: float,
     volatility: float,
-    vol_constant: float = 0.01,
-    epsilon: float = 1e-8
+    vol_constant: float = 0.05,
+    epsilon: float = 0.1
 ) -> float:
     """
     Scale agent's action to actual position using volatility.
 
-    Formula: position = action × min(1.0, C / σ)
+    Formula: position = action × min(1.0, C / max(σ, epsilon))
 
     This decouples position sizing from agent learning:
     - Agent learns direction and conviction (action)
     - Position sizing handled by volatility (risk management)
+    - Volatility floor (epsilon) prevents extreme positions when σ near zero
 
     Args:
         action: Raw agent action (can be any value, positive or negative)
         volatility: Realized volatility from features (standardized/normalized)
-        vol_constant: Position sizing constant C (default: 0.01)
-        epsilon: Numerical stability constant
+        vol_constant: Position sizing constant C (default: 0.05 for ~5-6% positions)
+        epsilon: Volatility floor to prevent explosions (default: 0.1)
 
     Returns:
         Scaled position (can be long or short)
+
+    Examples:
+        With C=0.05, epsilon=0.1:
+        - σ = 0.8 (typical) → scaling = 0.05/0.8 = 0.0625 → ~6% position
+        - σ = 0.001 (rare) → floor to 0.1 → scaling = 0.05/0.1 = 0.5 → 50% position
+        - σ = 3.0 (high) → scaling = 0.05/3.0 = 0.0167 → ~2% position
     """
-    # Ensure volatility is positive and non-zero
+    # Floor volatility to prevent near-zero values from causing position explosions
     vol_safe = max(abs(volatility), epsilon)
 
     # Volatility scaling: smaller position when vol is high

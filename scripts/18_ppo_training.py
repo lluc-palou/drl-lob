@@ -288,8 +288,10 @@ def run_episode(
         volatility = current_sample['features'][6].item()
 
         # Scale action to position using volatility
+        # C=0.05 gives ~6% positions at typical volatility (σ≈0.8)
+        # epsilon=0.1 floors volatility to prevent position explosions when σ→0
         position_curr = compute_volatility_scaled_position(
-            action_val, volatility, vol_constant=0.01
+            action_val, volatility, vol_constant=0.05, epsilon=0.1
         )
 
         # Get previous position (volatility-scaled from previous timestep)
