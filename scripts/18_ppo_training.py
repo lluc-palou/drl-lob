@@ -87,8 +87,8 @@ from src.ppo import (
     Transition,
     ppo_update,
     get_valid_timesteps,
-    compute_forward_looking_reward,
-    compute_transaction_cost,
+    compute_volatility_scaled_position,
+    compute_simple_reward,
     compute_unrealized_pnl,
     ModelConfig,
     PPOConfig,
@@ -280,40 +280,38 @@ def run_episode(
         log_prob_val = log_prob.item() if not deterministic else 0.0
         value_val = value.item()
 
-        # Get future returns for reward computation
-        future_returns = torch.tensor([
-            episode.samples[t + h]['target'] for h in range(1, model_config.horizon + 1)
-        ], dtype=torch.float32)
+        # Get immediate target (one-step forward return)
+        target = current_sample['target']
 
-        # Get volatility from features (assume it's in features)
-        volatility = current_sample['features'][1].item()  # Assuming 2nd feature is volatility
+        # Extract volatility from features (standardized/normalized)
+        # Assuming volatility is at index 1 (second feature)
+        volatility = current_sample['features'][1].item()
 
-        # Compute reward
-        prev_action = agent_state.current_position
-        reward = compute_forward_looking_reward(
-            action_prev=prev_action,
-            action_curr=action_val,
-            future_returns=future_returns,
-            volatility=volatility,
-            spread_bps=reward_config.spread_bps,
-            tc_bps=reward_config.tc_bps,
-            lambda_risk=reward_config.lambda_risk,
-            alpha_penalty=reward_config.alpha_penalty,
-            epsilon=reward_config.epsilon
+        # Scale action to position using volatility
+        position_curr = compute_volatility_scaled_position(
+            action_val, volatility, vol_constant=0.01
         )
 
-        # Transaction cost
-        tc = compute_transaction_cost(
-            prev_action, action_val,
-            reward_config.spread_bps, reward_config.tc_bps
+        # Get previous position (volatility-scaled from previous timestep)
+        position_prev = agent_state.current_position
+
+        # Compute reward using simple PnL-based formula
+        reward, gross_pnl, tc = compute_simple_reward(
+            position_prev, position_curr, target, taker_fee=0.0005
         )
 
-        # Unrealized PnL
-        unrealized = compute_unrealized_pnl(action_val, future_returns)
+        # Unrealized PnL for next timestep
+        unrealized = compute_unrealized_pnl(position_curr, target)
 
-        # Update agent state
-        log_return = current_sample['target']
-        agent_state.update(action_val, log_return, tc, reward, unrealized)
+        # Get backward return for realized PnL tracking
+        # For first valid step, use 0; otherwise use previous sample's target
+        if t == valid_steps[0]:
+            log_return = 0.0
+        else:
+            log_return = episode.samples[t - 1]['target']
+
+        # Update agent state with scaled position
+        agent_state.update(position_curr, log_return, tc, reward, unrealized, gross_pnl)
         episode_returns.append(reward)
 
         # Check if episode should end
@@ -406,6 +404,9 @@ def train_epoch(
         logger(f'    Episode {ep_idx}/{total_episodes} - '
                f'Reward: {metrics["total_reward"]:.4f}, '
                f'PnL: {metrics["total_pnl"]:.4f}, '
+               f'Gross PnL/Trade: {metrics["avg_gross_pnl_per_trade"]:.6f}, '
+               f'TC/Trade: {metrics["avg_tc_per_trade"]:.6f}, '
+               f'PnL/TC: {metrics["pnl_to_cost_ratio"]:.2f}, '
                f'Steps: {metrics["episode_length"]}', "INFO")
 
         # Perform PPO update if buffer is full
@@ -485,6 +486,9 @@ def validate_epoch(
         logger(f'    Episode {ep_idx}/{total_episodes} - '
                f'Reward: {metrics["total_reward"]:.4f}, '
                f'PnL: {metrics["total_pnl"]:.4f}, '
+               f'Gross PnL/Trade: {metrics["avg_gross_pnl_per_trade"]:.6f}, '
+               f'TC/Trade: {metrics["avg_tc_per_trade"]:.6f}, '
+               f'PnL/TC: {metrics["pnl_to_cost_ratio"]:.2f}, '
                f'Steps: {metrics["episode_length"]}', "INFO")
 
     # Compute averages

@@ -123,16 +123,17 @@ class AgentState:
         # Trading state
         self.current_position = 0.0
         self.cumulative_realized_pnl = 0.0
+        self.cumulative_gross_pnl = 0.0  # NEW: Track gross PnL separately
         self.cumulative_tc = 0.0
         self.trade_count = 0
         self.step_count = 0
-        
+
         # Episode metrics
         self.max_pnl = float('-inf')
         self.min_pnl = float('inf')
         self.max_position = 0.0
         self.total_reward = 0.0
-        
+
         # Current unrealized
         self.unrealized_pnl = 0.0
     
@@ -142,35 +143,40 @@ class AgentState:
         log_return: float,
         transaction_cost: float,
         reward: float,
-        unrealized_pnl: float
+        unrealized_pnl: float,
+        gross_pnl: float = 0.0  # NEW: Gross PnL from current timestep
     ):
         """
         Update agent state after taking action.
-        
+
         Args:
-            action: New position taken
+            action: New position taken (volatility-scaled)
             log_return: Return that occurred this timestep
             transaction_cost: TC paid for position change
             reward: Reward received
             unrealized_pnl: Expected PnL from new position
+            gross_pnl: Gross PnL from current position (before TC)
         """
         # Realized PnL from previous position
         realized_this_step = self.current_position * log_return
         self.cumulative_realized_pnl += realized_this_step
-        
+
+        # Gross PnL tracking
+        self.cumulative_gross_pnl += gross_pnl
+
         # Transaction costs
         self.cumulative_tc += transaction_cost
-        
+
         # Track trades
         if abs(action - self.current_position) > 0.01:
             self.trade_count += 1
-        
+
         # Update position
         self.current_position = action
-        
+
         # Unrealized PnL
         self.unrealized_pnl = unrealized_pnl
-        
+
         # Track metrics
         net_pnl = self.cumulative_realized_pnl - self.cumulative_tc
         self.max_pnl = max(self.max_pnl, net_pnl)
@@ -183,7 +189,12 @@ class AgentState:
         """Get episode metrics."""
         net_pnl = self.cumulative_realized_pnl - self.cumulative_tc
         total_pnl = net_pnl + self.unrealized_pnl
-        
+
+        # New metrics for gross PnL and costs
+        avg_gross_pnl_per_trade = self.cumulative_gross_pnl / max(self.trade_count, 1)
+        avg_tc_per_trade = self.cumulative_tc / max(self.trade_count, 1)
+        pnl_to_cost_ratio = self.cumulative_gross_pnl / self.cumulative_tc if self.cumulative_tc > 1e-8 else 0.0
+
         return {
             'net_realized_pnl': net_pnl,
             'cumulative_tc': self.cumulative_tc,
@@ -194,7 +205,12 @@ class AgentState:
             'max_drawdown': self.max_pnl - self.min_pnl,
             'max_position': self.max_position,
             'total_reward': self.total_reward,
-            'avg_reward': self.total_reward / max(self.step_count, 1)
+            'avg_reward': self.total_reward / max(self.step_count, 1),
+            # NEW: Gross PnL metrics
+            'cumulative_gross_pnl': self.cumulative_gross_pnl,
+            'avg_gross_pnl_per_trade': avg_gross_pnl_per_trade,
+            'avg_tc_per_trade': avg_tc_per_trade,
+            'pnl_to_cost_ratio': pnl_to_cost_ratio
         }
     
     def reset(self):
