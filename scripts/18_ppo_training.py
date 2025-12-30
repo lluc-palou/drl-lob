@@ -501,11 +501,85 @@ def train_epoch(
     return epoch_metrics
 
 
+def compute_validation_metrics(agent, buffer, ppo_config, experiment_type, device):
+    """
+    Compute model metrics (losses, entropy, uncertainty) on validation data.
+    Similar to ppo_update but without gradient updates.
+    """
+    if len(buffer) == 0:
+        return {
+            'policy_loss': 0.0,
+            'value_loss': 0.0,
+            'entropy': 0.0,
+            'uncertainty': 0.0
+        }
+
+    agent.eval()
+    batch = buffer.get_batch(device)
+
+    codebooks = batch['codebooks']
+    features = batch['features']
+    timestamps = batch['timestamps']
+    actions = batch['actions']
+    old_log_probs = batch['log_probs']
+    rewards = batch['rewards']
+    old_values = batch['values']
+    dones = batch['dones']
+
+    # Compute advantages and returns using GAE
+    from src.ppo.ppo import compute_gae
+    advantages, returns = compute_gae(
+        rewards, old_values, dones,
+        gamma=ppo_config.gamma,
+        gae_lambda=ppo_config.gae_lambda
+    )
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+    # Compute metrics on validation data
+    from src.ppo.config import ExperimentType
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        if experiment_type == ExperimentType.EXP1_BOTH_ORIGINAL:
+            new_log_probs, new_values, entropy, std = agent.evaluate_actions(
+                codebooks, features, timestamps, actions
+            )
+        elif experiment_type == ExperimentType.EXP2_FEATURES_ORIGINAL:
+            new_log_probs, new_values, entropy, std = agent.evaluate_actions(
+                features, timestamps, actions
+            )
+        else:  # ExperimentType.EXP3_CODEBOOK_ORIGINAL
+            new_log_probs, new_values, entropy, std = agent.evaluate_actions(
+                codebooks, timestamps, actions
+            )
+
+        # Policy loss
+        ratio = torch.exp(new_log_probs - old_log_probs)
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1 - ppo_config.clip_ratio, 1 + ppo_config.clip_ratio) * advantages
+        policy_loss = -torch.min(surr1, surr2).mean()
+
+        # Value loss
+        value_loss = F.mse_loss(new_values, returns)
+
+        # Entropy and uncertainty
+        mean_entropy = entropy.mean()
+        mean_uncertainty = std.mean()
+
+    return {
+        'policy_loss': policy_loss.item(),
+        'value_loss': value_loss.item(),
+        'entropy': mean_entropy.item(),
+        'uncertainty': mean_uncertainty.item()
+    }
+
+
 def validate_epoch(
     agent,
     episodes: list,
     reward_config: RewardConfig,
     model_config: ModelConfig,
+    ppo_config: PPOConfig,
     experiment_type: ExperimentType,
     device: str
 ):
@@ -518,7 +592,7 @@ def validate_epoch(
     agent.eval()
 
     state_buffer = StateBuffer(model_config.window_size)
-    trajectory_buffer = TrajectoryBuffer(1000)  # Not used, just placeholder
+    trajectory_buffer = TrajectoryBuffer(ppo_config.buffer_capacity)
     agent_state = AgentState()
 
     val_metrics = {
@@ -598,6 +672,15 @@ def validate_epoch(
         val_metrics['avg_pnl'] = 0.0
         val_metrics['sharpe'] = 0.0
 
+    # Compute model metrics (losses, entropy, uncertainty) on validation data
+    model_metrics = compute_validation_metrics(
+        agent, trajectory_buffer, ppo_config, experiment_type, device
+    )
+    val_metrics['policy_loss'] = model_metrics['policy_loss']
+    val_metrics['value_loss'] = model_metrics['value_loss']
+    val_metrics['entropy'] = model_metrics['entropy']
+    val_metrics['uncertainty'] = model_metrics['uncertainty']
+
     return val_metrics
 
 
@@ -650,11 +733,11 @@ def train_split(
 
     # Learning rate scheduler - reduces LR when validation Sharpe plateaus
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6
+        optimizer, mode='max', factor=0.3, patience=2, min_lr=1e-6
     )
 
     logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
-    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.5, patience=3)', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.3, patience=2)', "INFO")
 
     # Training loop
     metrics_logger = MetricsLogger(log_dir=str(LOG_DIR))
@@ -683,12 +766,16 @@ def train_split(
 
         # Validation (every epoch)
         val_metrics = validate_epoch(
-            agent, val_episodes, config.reward, config.model, experiment_type, device
+            agent, val_episodes, config.reward, config.model, config.ppo, experiment_type, device
         )
 
         logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
                f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'  Losses - Policy: {val_metrics["policy_loss"]:.4f}, '
+               f'Value: {val_metrics["value_loss"]:.4f}, '
+               f'Entropy: {val_metrics["entropy"]:.4f}, '
+               f'Uncertainty: {val_metrics["uncertainty"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
         scheduler.step(val_metrics["sharpe"])
@@ -706,6 +793,10 @@ def train_split(
         mlflow.log_metric("val_sharpe", val_metrics["sharpe"], step=epoch)
         mlflow.log_metric("val_avg_reward", val_metrics["avg_reward"], step=epoch)
         mlflow.log_metric("val_avg_pnl", val_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("val_policy_loss", val_metrics["policy_loss"], step=epoch)
+        mlflow.log_metric("val_value_loss", val_metrics["value_loss"], step=epoch)
+        mlflow.log_metric("val_entropy", val_metrics["entropy"], step=epoch)
+        mlflow.log_metric("val_uncertainty", val_metrics["uncertainty"], step=epoch)
         mlflow.log_metric("learning_rate", current_lr, step=epoch)
 
         # Save checkpoint if best
