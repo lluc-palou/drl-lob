@@ -124,14 +124,14 @@ class PriorTrainer:
 
             epoch_duration = time.time() - epoch_start
 
-            # Log with both loss components
+            # Log with both loss components (6 decimals for better visibility of Huber loss)
             logger(
                 f'Epoch {epoch+1}/{PRIOR_TRAINING_CONFIG["max_epochs"]} '
                 f'[{epoch_duration:.1f}s] - '
-                f'train_loss: {train_loss:.4f} '
-                f'(codebook: {train_codebook_loss:.4f}, target: {train_target_loss:.4f}), '
-                f'val_loss: {val_loss:.4f} '
-                f'(codebook: {val_codebook_loss:.4f}, target: {val_target_loss:.4f})',
+                f'train_loss: {train_loss:.6f} '
+                f'(codebook: {train_codebook_loss:.6f}, target: {train_target_loss:.6f}), '
+                f'val_loss: {val_loss:.6f} '
+                f'(codebook: {val_codebook_loss:.6f}, target: {val_target_loss:.6f})',
                 "INFO"
             )
 
@@ -151,14 +151,14 @@ class PriorTrainer:
                 self.best_epoch = epoch
                 # Deep copy model state (clone tensors, not just dict structure)
                 self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
-                logger(f'  → New best validation loss: {self.best_val_loss:.4f}', "INFO")
+                logger(f'  → New best validation loss: {self.best_val_loss:.6f}', "INFO")
             
             # Early stopping
             if epoch - self.best_epoch >= PRIOR_TRAINING_CONFIG['patience']:
                 logger(f'Early stopping at epoch {epoch+1}', "INFO")
                 break
         
-        logger(f'Training complete. Best epoch: {self.best_epoch+1}, Best val loss: {self.best_val_loss:.4f}', "INFO")
+        logger(f'Training complete. Best epoch: {self.best_epoch+1}, Best val loss: {self.best_val_loss:.6f}', "INFO")
         
         # Load best model
         if self.best_model_state is not None:
