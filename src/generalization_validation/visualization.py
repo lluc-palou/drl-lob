@@ -413,29 +413,28 @@ def plot_target_distribution(
     """
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Histogram + KDE
+    # Histogram
     ax = axes[0]
 
-    # Compute common bin edges for consistent bin widths
-    all_targets = np.concatenate([val_targets, syn_targets])
-    bin_edges = np.histogram_bin_edges(all_targets, bins=50)
+    # Compute bin edges for each distribution separately
+    val_bin_edges = np.histogram_bin_edges(val_targets, bins=50)
+    syn_bin_edges = np.histogram_bin_edges(syn_targets, bins=50)
+
+    # Compute bin widths
+    val_bin_width = val_bin_edges[1] - val_bin_edges[0]
+    syn_bin_width = syn_bin_edges[1] - syn_bin_edges[0]
+
+    # Use the smaller bin width to create common bins across full data range
+    smaller_bin_width = min(val_bin_width, syn_bin_width)
+    data_min = min(val_targets.min(), syn_targets.min())
+    data_max = max(val_targets.max(), syn_targets.max())
+    n_bins = int(np.ceil((data_max - data_min) / smaller_bin_width))
+    bin_edges = np.linspace(data_min, data_max, n_bins + 1)
 
     ax.hist(val_targets, bins=bin_edges, alpha=0.5, color=COLORS['non_significant'],
             label='Validation', density=True, edgecolor='black', linewidth=0.5)
     ax.hist(syn_targets, bins=bin_edges, alpha=0.5, color=COLORS['significant'],
             label='Synthetic', density=True, edgecolor='black', linewidth=0.5)
-
-    # Add KDE
-    from scipy.stats import gaussian_kde
-    kde_val = gaussian_kde(val_targets)
-    kde_syn = gaussian_kde(syn_targets)
-
-    x_range = np.linspace(min(val_targets.min(), syn_targets.min()),
-                          max(val_targets.max(), syn_targets.max()), 200)
-    ax.plot(x_range, kde_val(x_range), color=COLORS['non_significant'],
-            linewidth=2, linestyle='--', label='Validation KDE')
-    ax.plot(x_range, kde_syn(x_range), color=COLORS['significant'],
-            linewidth=2, linestyle='--', label='Synthetic KDE')
 
     ax.set_xlabel('Target Value', color='black', fontweight='bold')
     ax.set_ylabel('Density', color='black', fontweight='bold')
