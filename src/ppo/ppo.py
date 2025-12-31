@@ -157,16 +157,19 @@ def ppo_update(
             # Uncertainty penalty (prevents std exploitation)
             uncertainty_penalty = config.uncertainty_coef * std.mean()
 
-            # Activity bonus (prevents no-trade collapse)
-            # Encourages non-zero positions by rewarding high |actions|
-            activity_bonus = config.activity_coef * torch.abs(mb_actions).mean()
+            # Inactivity penalty (prevents no-trade collapse)
+            # Penalizes low |actions| (close to zero positions)
+            # When |actions| → 0: inactivity → 1 (high penalty)
+            # When |actions| → 1: inactivity → 0 (no penalty)
+            inactivity = (1.0 - torch.abs(mb_actions)).mean()
+            inactivity_penalty = config.activity_coef * inactivity
 
-            # Total loss (policy + value - entropy - activity + uncertainty)
+            # Total loss (policy + value - entropy + inactivity + uncertainty)
             # Subtract bonuses, add penalties
             loss = (policy_loss +
                    config.value_coef * value_loss -
-                   entropy_bonus -
-                   activity_bonus +
+                   entropy_bonus +
+                   inactivity_penalty +
                    uncertainty_penalty)
 
             # Optimization step
@@ -180,7 +183,7 @@ def ppo_update(
             total_value_loss += value_loss.item()
             total_entropy += entropy.mean().item()
             total_uncertainty += std.mean().item()
-            total_activity += torch.abs(mb_actions).mean().item()
+            total_activity += torch.abs(mb_actions).mean().item()  # Still track activity for interpretability
             n_updates += 1
 
     return {
@@ -188,6 +191,6 @@ def ppo_update(
         'value_loss': total_value_loss / n_updates,
         'entropy': total_entropy / n_updates,
         'uncertainty': total_uncertainty / n_updates,
-        'activity': total_activity / n_updates,
+        'activity': total_activity / n_updates,  # Average |actions|
         'n_updates': n_updates
     }

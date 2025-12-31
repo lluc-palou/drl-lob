@@ -87,7 +87,7 @@ class PPOConfig:
     value_coef: float = 1.0              # Value loss coefficient (increased for better value estimates)
     entropy_coef: float = 0.01           # Fixed entropy coefficient (encourages exploration)
     uncertainty_coef: float = 0.1        # Uncertainty penalty coefficient (prevents std exploitation)
-    activity_coef: float = 0.01          # Activity penalty coefficient (prevents no-trade collapse)
+    activity_coef: float = 0.001         # Inactivity penalty coefficient (prevents no-trade collapse, reduced pressure)
     max_grad_norm: float = 0.5           # Gradient clipping norm
     n_epochs: int = 2                    # PPO epochs per update (reduced for speed)
     batch_size: int = 256                # Minibatch size (increased 8x to utilize GPU)
