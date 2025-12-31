@@ -92,6 +92,7 @@ from src.ppo import (
     compute_simple_reward,
     compute_unrealized_pnl,
     compute_ewma_volatility,
+    compute_directional_bonus,
     ModelConfig,
     PPOConfig,
     RewardConfig,
@@ -309,6 +310,15 @@ def run_episode(
         reward, gross_pnl, tc = compute_simple_reward(
             position_prev, position_curr, target, taker_fee=0.0005
         )
+
+        # Compute directional accuracy bonus (for reward shaping, not logged PnL)
+        # Provides additional signal when agent predicts direction correctly
+        # This bonus affects ONLY the reward signal for learning, not the logged gross_pnl metric
+        directional_bonus = compute_directional_bonus(position_curr, target, bonus_weight=0.00001)
+
+        # Add directional bonus to reward (before volatility scaling)
+        # Note: gross_pnl remains unchanged for accurate performance tracking
+        reward = reward + directional_bonus
 
         # Scale reward by realized volatility (EWMA of recent returns)
         # Collect recent 1-step targets from past samples for volatility estimate
