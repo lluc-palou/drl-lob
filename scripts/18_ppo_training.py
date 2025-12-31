@@ -529,7 +529,8 @@ def compute_validation_metrics(agent, buffer, ppo_config, experiment_type, devic
             'policy_loss': 0.0,
             'value_loss': 0.0,
             'entropy': 0.0,
-            'uncertainty': 0.0
+            'uncertainty': 0.0,
+            'activity': 0.0
         }
 
     agent.eval()
