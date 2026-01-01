@@ -110,7 +110,7 @@ class TrainingConfig:
     max_epochs: int = 100                # Maximum training epochs (increased for RL exploration needs)
     patience: int = 15                   # Early stopping patience (increased to allow more exploration)
     min_delta: float = 0.01              # Minimum improvement for early stopping
-    validate_every: int = 2              # Validate every 2 epochs (reduce validation overhead)
+    validate_every: int = 1              # Validate every epoch
     log_every: int = 10                  # Log every N episodes
     checkpoint_dir: str = "checkpoints"  # Directory for model checkpoints
     log_dir: str = "logs"                # Directory for logs
