@@ -836,11 +836,6 @@ def train_split(
         logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
                f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
-        logger(f'  Losses - Policy: {val_metrics["policy_loss"]:.4f}, '
-               f'Value: {val_metrics["value_loss"]:.4f}, '
-               f'Entropy: {val_metrics["entropy"]:.4f}, '
-               f'Uncertainty: {val_metrics["uncertainty"]:.4f}, '
-               f'Activity: {val_metrics["activity"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
         scheduler.step(val_metrics["sharpe"])
