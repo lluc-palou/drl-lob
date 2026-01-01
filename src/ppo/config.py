@@ -90,7 +90,7 @@ class PPOConfig:
     activity_coef: float = 0.0005        # Inactivity penalty coefficient (reduced to learn quality over quantity)
     max_grad_norm: float = 0.5           # Gradient clipping norm
     n_epochs: int = 1                    # PPO epochs per update (reduced for speed - still effective)
-    batch_size: int = 1024               # Minibatch size (increased for better GPU utilization - 2.2GB/15GB usage)
+    batch_size: int = 2048               # Minibatch size (maximized for GPU - processes entire buffer in one batch)
     buffer_capacity: int = 2048          # Trajectory buffer size (increased 4x)
     
 
