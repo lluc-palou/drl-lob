@@ -135,10 +135,10 @@ class AgentState:
         self.total_reward = 0.0  # Learning signal (includes directional bonus)
 
         # Trading returns for different fee scenarios (all exclude directional bonus)
-        self.total_trading_return_raw = 0.0  # Baseline: Raw returns (no fees)
-        self.total_trading_return_taker = 0.0  # Taker fee 5 bps (market orders)
-        self.total_trading_return_maker_neutral = 0.0  # Maker fee 0 bps (limit orders)
-        self.total_trading_return_maker_rebate = 0.0  # Maker rebate -2.5 bps (limit orders)
+        self.total_trading_return_raw = 0.0  # Baseline: Buy-and-hold (no position sizing, no fees)
+        self.total_trading_return_taker = 0.0  # Taker fee 5 bps (market orders with agent sizing)
+        self.total_trading_return_maker_neutral = 0.0  # Maker fee 0 bps (limit orders with agent sizing)
+        self.total_trading_return_maker_rebate = 0.0  # Maker rebate -2.5 bps (limit orders with agent sizing)
 
         # Legacy field for backward compatibility (points to taker)
         self.total_trading_return = 0.0  # Same as total_trading_return_taker
@@ -163,10 +163,10 @@ class AgentState:
         unrealized_pnl: float,
         gross_pnl: float = 0.0,  # Gross PnL from current timestep
         action_std: float = 0.0,  # Policy std (agent's uncertainty/confidence)
-        trading_return_raw: float = 0.0,  # Baseline: Raw returns (no fees)
-        trading_return_taker: float = 0.0,  # Taker fee 5 bps (market orders)
-        trading_return_maker_neutral: float = 0.0,  # Maker fee 0 bps (limit orders)
-        trading_return_maker_rebate: float = 0.0  # Maker rebate -2.5 bps (limit orders)
+        trading_return_raw: float = 0.0,  # Baseline: Buy-and-hold (no position sizing, no fees)
+        trading_return_taker: float = 0.0,  # Taker fee 5 bps (market orders with agent sizing)
+        trading_return_maker_neutral: float = 0.0,  # Maker fee 0 bps (limit orders with agent sizing)
+        trading_return_maker_rebate: float = 0.0  # Maker rebate -2.5 bps (limit orders with agent sizing)
     ):
         """
         Update agent state after taking action.
@@ -179,10 +179,10 @@ class AgentState:
             unrealized_pnl: Expected PnL from new position
             gross_pnl: Gross PnL from current position (before TC)
             action_std: Policy standard deviation (agent's learned uncertainty)
-            trading_return_raw: Baseline raw returns (no fees, excludes directional bonus)
-            trading_return_taker: Taker fee 5 bps (market orders, excludes directional bonus)
-            trading_return_maker_neutral: Maker fee 0 bps (limit orders, excludes directional bonus)
-            trading_return_maker_rebate: Maker rebate -2.5 bps (limit orders, excludes directional bonus)
+            trading_return_raw: Buy-and-hold baseline (constant pos=1, no fees, excludes directional bonus)
+            trading_return_taker: Taker fee 5 bps (agent sizing, market orders, excludes directional bonus)
+            trading_return_maker_neutral: Maker fee 0 bps (agent sizing, limit orders, excludes directional bonus)
+            trading_return_maker_rebate: Maker rebate -2.5 bps (agent sizing, limit orders, excludes directional bonus)
         """
         # Realized PnL from previous position
         realized_this_step = self.current_position * log_return
@@ -256,10 +256,10 @@ class AgentState:
             'avg_reward': self.total_reward / max(self.step_count, 1),
 
             # Trading returns for all fee scenarios (all exclude directional bonus)
-            'total_trading_return_raw': self.total_trading_return_raw,  # Baseline: no fees
-            'total_trading_return_taker': self.total_trading_return_taker,  # Taker 5 bps
-            'total_trading_return_maker_neutral': self.total_trading_return_maker_neutral,  # Maker 0 bps
-            'total_trading_return_maker_rebate': self.total_trading_return_maker_rebate,  # Maker -2.5 bps
+            'total_trading_return_raw': self.total_trading_return_raw,  # Baseline: buy-and-hold
+            'total_trading_return_taker': self.total_trading_return_taker,  # Taker 5 bps (agent sizing)
+            'total_trading_return_maker_neutral': self.total_trading_return_maker_neutral,  # Maker 0 bps (agent sizing)
+            'total_trading_return_maker_rebate': self.total_trading_return_maker_rebate,  # Maker -2.5 bps (agent sizing)
             'total_trading_return': self.total_trading_return,  # Legacy (same as taker)
             'avg_trading_return': self.total_trading_return / max(self.step_count, 1),
             # Gross PnL metrics

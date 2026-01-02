@@ -335,18 +335,19 @@ def run_episode(
         # These are used for performance metrics (Sharpe ratio calculation)
         position_change = abs(position_curr - position_prev)
 
-        # 1. Baseline: Raw returns (no fees) - to assess pure predictive power
-        trading_return_raw = gross_pnl / realized_vol
+        # 1. Baseline: Buy-and-hold (raw returns, no position sizing, no fees)
+        # Equivalent to constant position of +1.0 (always long)
+        trading_return_raw = target / realized_vol
 
-        # 2. Taker fee (5 bps) - market orders (agent training uses this)
+        # 2. Taker fee (5 bps) - market orders with agent's position sizing (agent training uses this)
         trading_return_taker = reward / realized_vol  # reward already has taker fee
 
-        # 3. Maker fee neutral (0 bps) - limit orders without rebate
+        # 3. Maker fee neutral (0 bps) - limit orders with agent's position sizing, no rebate
         tc_maker_neutral = 0.0 * position_change
         reward_maker_neutral = gross_pnl - tc_maker_neutral
         trading_return_maker_neutral = reward_maker_neutral / realized_vol
 
-        # 4. Maker fee rebate (-2.5 bps) - limit orders with rebate
+        # 4. Maker fee rebate (-2.5 bps) - limit orders with agent's position sizing, with rebate
         tc_maker_rebate = -0.00025 * position_change
         reward_maker_rebate = gross_pnl - tc_maker_rebate
         trading_return_maker_rebate = reward_maker_rebate / realized_vol
@@ -957,10 +958,10 @@ def train_split(
         logger(f'  Train - Avg Reward: {train_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
-        logger(f'      Raw (no fees):           {train_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):           {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):           {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
-        logger(f'      Maker Rebate (-2.5 bps): {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
         logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
                f'Value: {train_metrics["avg_value_loss"]:.4f}, '
                f'Entropy: {train_metrics["avg_entropy"]:.4f}, '
@@ -975,10 +976,10 @@ def train_split(
         logger(f'  Val - Avg Reward: {val_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
-        logger(f'      Raw (no fees):           {val_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):           {val_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):           {val_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
-        logger(f'      Maker Rebate (-2.5 bps): {val_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {val_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {val_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):            {val_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {val_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
         scheduler.step(val_metrics["sharpe"])
