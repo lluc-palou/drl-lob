@@ -308,8 +308,10 @@ def run_episode(
         position_prev = agent_state.current_position
 
         # Compute reward using simple PnL-based formula
+        # TRAINING SCENARIO: Maker neutral (0 bps transaction cost)
+        # Agent learns to trade profitably with minimal friction
         reward, gross_pnl, tc = compute_simple_reward(
-            position_prev, position_curr, target, taker_fee=0.0005
+            position_prev, position_curr, target, taker_fee=0.0
         )
 
         # Compute directional accuracy bonus (for reward shaping, not logged PnL)
@@ -339,13 +341,13 @@ def run_episode(
         # Equivalent to constant position of +1.0 (always long)
         trading_return_raw = target / realized_vol
 
-        # 2. Taker fee (5 bps) - market orders with agent's position sizing (agent training uses this)
-        trading_return_taker = reward / realized_vol  # reward already has taker fee
+        # 2. Maker neutral (0 bps) - agent's position sizing with no transaction cost [TRAINING SCENARIO]
+        trading_return_maker_neutral = reward / realized_vol  # reward already has 0 bps TC
 
-        # 3. Maker fee neutral (0 bps) - limit orders with agent's position sizing, no rebate
-        tc_maker_neutral = 0.0 * position_change
-        reward_maker_neutral = gross_pnl - tc_maker_neutral
-        trading_return_maker_neutral = reward_maker_neutral / realized_vol
+        # 3. Taker fee (5 bps) - market orders with agent's position sizing
+        tc_taker = 0.0005 * position_change
+        reward_taker = gross_pnl - tc_taker
+        trading_return_taker = reward_taker / realized_vol
 
         # 4. Maker fee rebate (-2.5 bps) - limit orders with agent's position sizing, with rebate
         tc_maker_rebate = -0.00025 * position_change
@@ -594,7 +596,7 @@ def train_epoch(
         epoch_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 5 bps
         epoch_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
         epoch_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
-        epoch_metrics['sharpe'] = epoch_metrics['sharpe_taker']  # Legacy field (use taker)
+        epoch_metrics['sharpe'] = epoch_metrics['sharpe_maker_neutral']  # Legacy field (use maker_neutral for training)
     else:
         epoch_metrics['avg_reward'] = 0.0
         epoch_metrics['avg_pnl'] = 0.0
@@ -841,7 +843,7 @@ def validate_epoch(
         val_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 5 bps
         val_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
         val_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
-        val_metrics['sharpe'] = val_metrics['sharpe_taker']  # Legacy field (use taker)
+        val_metrics['sharpe'] = val_metrics['sharpe_maker_neutral']  # Legacy field (use maker_neutral for training)
     else:
         val_metrics['avg_reward'] = 0.0
         val_metrics['avg_pnl'] = 0.0
@@ -965,8 +967,8 @@ def train_split(
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
         logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}', "INFO")
         logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
         logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
                f'Value: {train_metrics["avg_value_loss"]:.4f}, '
@@ -983,8 +985,8 @@ def train_split(
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
         logger(f'      Buy-and-Hold (baseline):  {val_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):            {val_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):            {val_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {val_metrics["sharpe_maker_neutral"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Taker (5 bps):            {val_metrics["sharpe_taker"]:.4f}', "INFO")
         logger(f'      Maker Rebate (-2.5 bps):  {val_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
@@ -1184,8 +1186,8 @@ def train_test_mode(
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
         logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}', "INFO")
         logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
         logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
                f'Value: {train_metrics["avg_value_loss"]:.4f}, '
@@ -1202,8 +1204,8 @@ def train_test_mode(
                f'Avg PnL: {test_metrics["avg_pnl"]:.4f}', "INFO")
         logger(f'    Sharpe Ratios:', "INFO")
         logger(f'      Buy-and-Hold (baseline):  {test_metrics["sharpe_raw"]:.4f}', "INFO")
-        logger(f'      Taker (5 bps):            {test_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
-        logger(f'      Maker (0 bps):            {test_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {test_metrics["sharpe_maker_neutral"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Taker (5 bps):            {test_metrics["sharpe_taker"]:.4f}', "INFO")
         logger(f'      Maker Rebate (-2.5 bps):  {test_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
 
         # Update learning rate based on test Sharpe
