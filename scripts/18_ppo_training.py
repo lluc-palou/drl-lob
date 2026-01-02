@@ -469,7 +469,7 @@ def train_epoch(
         'total_trades': 0, 'total_steps': 0,
         'sum_mean_pos': 0.0, 'max_pos': 0.0,
         'sum_mean_std': 0.0, 'min_std': float('inf'), 'max_std': float('-inf'),
-        'sum_gross_pnl_per_trade': 0.0, 'sum_tc_per_trade': 0.0
+        'sum_gross_pnl_per_trade': 0.0, 'sum_position_change_per_trade': 0.0
     })
 
     for ep_idx, episode in enumerate(episodes, 1):
@@ -506,7 +506,7 @@ def train_epoch(
         dm['min_std'] = min(dm['min_std'], metrics['min_action_std'])
         dm['max_std'] = max(dm['max_std'], metrics['max_action_std'])
         dm['sum_gross_pnl_per_trade'] += metrics['avg_gross_pnl_per_trade']
-        dm['sum_tc_per_trade'] += metrics['avg_tc_per_trade']
+        dm['sum_position_change_per_trade'] += metrics['avg_position_change_per_trade']
 
         # Log when completing a parent episode (all chunks done)
         is_last_chunk = (ep_idx == total_episodes or
@@ -520,21 +520,20 @@ def train_epoch(
             avg_position = dm['sum_mean_pos'] / n_chunks
             avg_uncertainty = dm['sum_mean_std'] / n_chunks
             avg_gross_pnl = dm['sum_gross_pnl_per_trade'] / n_chunks
-            avg_tc_taker = dm['sum_tc_per_trade'] / n_chunks
+            avg_position_change = dm['sum_position_change_per_trade'] / n_chunks
             trade_frequency = dm['total_trades'] / dm['total_steps']
 
-            # Market orders (taker fee: 5 bps)
-            net_pnl_taker = avg_gross_pnl - avg_tc_taker
-
-            # Limit orders (maker fee: 0 bps or -2.5 bps rebate)
+            # Compute TC for all fee scenarios from position change
+            taker_fee = 0.0005  # 5 bps
             maker_fee_neutral = 0.0  # 0 bps
-            maker_fee_rebate = -0.00025  # -2.5 bps rebate
+            maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
 
-            # Calculate maker TC assuming same position changes
-            avg_position_change = avg_tc_taker / 0.0005  # Reverse engineer position change
+            avg_tc_taker = taker_fee * avg_position_change
             avg_tc_maker_neutral = maker_fee_neutral * avg_position_change
             avg_tc_maker_rebate = maker_fee_rebate * avg_position_change
 
+            # Net PnL for each scenario
+            net_pnl_taker = avg_gross_pnl - avg_tc_taker
             net_pnl_maker_neutral = avg_gross_pnl - avg_tc_maker_neutral
             net_pnl_maker_rebate = avg_gross_pnl - avg_tc_maker_rebate
 
@@ -744,7 +743,7 @@ def validate_epoch(
         'total_trades': 0, 'total_steps': 0,
         'sum_mean_pos': 0.0, 'max_pos': 0.0,
         'sum_mean_std': 0.0, 'min_std': float('inf'), 'max_std': float('-inf'),
-        'sum_gross_pnl_per_trade': 0.0, 'sum_tc_per_trade': 0.0
+        'sum_gross_pnl_per_trade': 0.0, 'sum_position_change_per_trade': 0.0
     })
 
     for ep_idx, episode in enumerate(episodes, 1):
@@ -780,7 +779,7 @@ def validate_epoch(
         dm['min_std'] = min(dm['min_std'], metrics['min_action_std'])
         dm['max_std'] = max(dm['max_std'], metrics['max_action_std'])
         dm['sum_gross_pnl_per_trade'] += metrics['avg_gross_pnl_per_trade']
-        dm['sum_tc_per_trade'] += metrics['avg_tc_per_trade']
+        dm['sum_position_change_per_trade'] += metrics['avg_position_change_per_trade']
 
         # Log when completing a parent episode (all chunks done)
         is_last_chunk = (ep_idx == total_episodes or
@@ -794,21 +793,20 @@ def validate_epoch(
             avg_position = dm['sum_mean_pos'] / n_chunks
             avg_uncertainty = dm['sum_mean_std'] / n_chunks
             avg_gross_pnl = dm['sum_gross_pnl_per_trade'] / n_chunks
-            avg_tc_taker = dm['sum_tc_per_trade'] / n_chunks
+            avg_position_change = dm['sum_position_change_per_trade'] / n_chunks
             trade_frequency = dm['total_trades'] / dm['total_steps']
 
-            # Market orders (taker fee: 5 bps)
-            net_pnl_taker = avg_gross_pnl - avg_tc_taker
-
-            # Limit orders (maker fee: 0 bps or -2.5 bps rebate)
+            # Compute TC for all fee scenarios from position change
+            taker_fee = 0.0005  # 5 bps
             maker_fee_neutral = 0.0  # 0 bps
-            maker_fee_rebate = -0.00025  # -2.5 bps rebate
+            maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
 
-            # Calculate maker TC assuming same position changes
-            avg_position_change = avg_tc_taker / 0.0005  # Reverse engineer position change
+            avg_tc_taker = taker_fee * avg_position_change
             avg_tc_maker_neutral = maker_fee_neutral * avg_position_change
             avg_tc_maker_rebate = maker_fee_rebate * avg_position_change
 
+            # Net PnL for each scenario
+            net_pnl_taker = avg_gross_pnl - avg_tc_taker
             net_pnl_maker_neutral = avg_gross_pnl - avg_tc_maker_neutral
             net_pnl_maker_rebate = avg_gross_pnl - avg_tc_maker_rebate
 

@@ -158,6 +158,7 @@ class AgentState:
         self.cumulative_realized_pnl = 0.0
         self.cumulative_gross_pnl = 0.0  # NEW: Track gross PnL separately
         self.cumulative_tc = 0.0
+        self.cumulative_position_change = 0.0  # NEW: Track total position changes for TC calculations
         self.trade_count = 0
         self.step_count = 0
 
@@ -227,8 +228,12 @@ class AgentState:
         # Transaction costs
         self.cumulative_tc += transaction_cost
 
+        # Track position changes (for computing TC in different scenarios)
+        position_change = abs(action - self.current_position)
+        self.cumulative_position_change += position_change
+
         # Track trades
-        if abs(action - self.current_position) > 0.01:
+        if position_change > 0.01:
             self.trade_count += 1
 
         # Update position
@@ -267,6 +272,7 @@ class AgentState:
         # Gross PnL metrics (realized PnL before TC)
         avg_gross_pnl_per_trade = self.cumulative_realized_pnl / max(self.trade_count, 1)
         avg_tc_per_trade = self.cumulative_tc / max(self.trade_count, 1)
+        avg_position_change_per_trade = self.cumulative_position_change / max(self.trade_count, 1)
         pnl_to_cost_ratio = self.cumulative_realized_pnl / self.cumulative_tc if self.cumulative_tc > 1e-8 else 0.0
 
         # Position metrics
@@ -299,6 +305,7 @@ class AgentState:
             'cumulative_gross_pnl': self.cumulative_gross_pnl,
             'avg_gross_pnl_per_trade': avg_gross_pnl_per_trade,
             'avg_tc_per_trade': avg_tc_per_trade,
+            'avg_position_change_per_trade': avg_position_change_per_trade,
             'pnl_to_cost_ratio': pnl_to_cost_ratio,
             # Action std metrics (policy uncertainty - low std = high confidence)
             'mean_action_std': mean_action_std,
