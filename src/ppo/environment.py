@@ -5,6 +5,7 @@ from pymongo import MongoClient, ASCENDING
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Iterator
 from collections import defaultdict
+from src.utils.logging import logger
 
 
 class Episode:
@@ -44,7 +45,7 @@ class EpisodeLoader:
         role: str = 'train'
     ) -> List[Episode]:
         """
-        Load episodes for a split from original data.
+        Load episodes for a split (original or synthetic based on experiment type).
 
         Args:
             split_id: Split identifier
@@ -53,7 +54,13 @@ class EpisodeLoader:
         Returns:
             List of Episode objects
         """
-        return self._load_original_episodes(split_id, role)
+        from .config import ExperimentType
+
+        # Experiment 4 uses synthetic data, others use original
+        if self.experiment_type == ExperimentType.EXP4_SYNTHETIC_BINS:
+            return self._load_synthetic_episodes(split_id, role)
+        else:
+            return self._load_original_episodes(split_id, role)
 
     def _load_original_episodes(
         self,
@@ -163,6 +170,73 @@ class EpisodeLoader:
                     )
                     episodes.append(chunk_episode)
                 parent_id += 1
+
+        return episodes
+
+    def _load_synthetic_episodes(
+        self,
+        split_id: int,
+        role: str
+    ) -> List[Episode]:
+        """
+        Load episodes from synthetic data (Experiment 4).
+
+        Synthetic data is organized by sequence_id (100 sequences per split),
+        with each sequence containing 120 samples ordered by position_in_sequence.
+
+        Args:
+            split_id: Split identifier
+            role: 'train' or 'val'
+
+        Returns:
+            List of Episode objects (one per sequence)
+        """
+        # Map 'val' to 'validation' for database query
+        db_role = 'validation' if role == 'val' else role
+
+        collection = self.db[f'split_{split_id}_synthetic']  # Synthetic data collection
+
+        # Query synthetic samples with role filter, sorted by sequence and position
+        cursor = collection.find(
+            {'role': db_role},
+            sort=[('sequence_id', 1), ('position_in_sequence', 1)]
+        )
+
+        # Group samples by sequence_id
+        episodes_by_sequence = defaultdict(list)
+
+        for doc in cursor:
+            sequence_id = doc['sequence_id']
+
+            # Prepare sample (note: field name is 'codebook_ind' not 'codebook_index')
+            sample = {
+                'codebook': doc['codebook_ind'],  # Synthetic uses 'codebook_ind'
+                'features': torch.tensor(doc['features'], dtype=torch.float32),
+                'timestamp': doc.get('timestamp', 0),  # Synthetic may not have real timestamps
+                'target': doc['target'],
+                'sequence_id': sequence_id,
+                'position_in_sequence': doc['position_in_sequence']
+            }
+
+            episodes_by_sequence[sequence_id].append(sample)
+
+        # Create Episode objects (one per sequence)
+        # Sequences are already 120 samples, so no chunking needed
+        episodes = []
+        for sequence_id in sorted(episodes_by_sequence.keys()):
+            samples = episodes_by_sequence[sequence_id]
+
+            # Verify sequence length
+            if len(samples) != 120:
+                logger(f"Warning: Sequence {sequence_id} has {len(samples)} samples (expected 120)", "WARNING")
+
+            # Use sequence_id as the "date" identifier for Episode
+            # This keeps Episode API consistent while using sequence-based organization
+            from datetime import date as dt_date
+            synthetic_date = dt_date(2000, 1, 1)  # Dummy date for synthetic data
+
+            episode = Episode(split_id, synthetic_date, samples, parent_id=sequence_id, chunk_id=0)
+            episodes.append(episode)
 
         return episodes
 

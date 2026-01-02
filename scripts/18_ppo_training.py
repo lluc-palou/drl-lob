@@ -1080,12 +1080,15 @@ def main():
     """Main execution function."""
     import argparse
 
+    # Allow modification of global directory variables for parallel execution
+    global CHECKPOINT_DIR, LOG_DIR
+
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='PPO Agent Training with Different Experiments')
-    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3],
+    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3, 4],
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
-                             '3=Codebook only (original). '
-                             'If not specified, runs all 3 experiments sequentially.')
+                             '3=Codebook only (original), 4=Codebook (synthetic). '
+                             'If not specified, runs all experiments sequentially.')
     parser.add_argument('--splits', type=str, default=None,
                         help='Comma-separated list of split IDs to train (e.g., "0,1,2"). '
                              'If not specified, trains on all available splits.')
@@ -1098,14 +1101,15 @@ def main():
     if args.experiment is not None:
         experiments_to_run = [args.experiment]
     else:
-        # Run all 3 experiments by default
-        experiments_to_run = [1, 2, 3]
+        # Run all experiments by default (including synthetic)
+        experiments_to_run = [1, 2, 3, 4]
 
     # Map experiment number to enum
     experiment_mapping = {
         1: ExperimentType.EXP1_BOTH_ORIGINAL,
         2: ExperimentType.EXP2_FEATURES_ORIGINAL,
-        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL
+        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL,
+        4: ExperimentType.EXP4_SYNTHETIC_BINS
     }
 
     # Setup device
@@ -1166,6 +1170,16 @@ def main():
         logger('=' * 100, "INFO")
         logger(f'Experiment: {selected_experiment.name}', "INFO")
 
+        # Create experiment-specific directories for parallel execution isolation
+        exp_artifact_dir = ARTIFACT_BASE_DIR / f"experiment_{exp_num}"
+        CHECKPOINT_DIR = exp_artifact_dir / "checkpoints"
+        LOG_DIR = exp_artifact_dir / "logs"
+
+        # Create directories
+        exp_artifact_dir.mkdir(parents=True, exist_ok=True)
+        CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
         # Create experiment config with selected experiment type
         config = ExperimentConfig(
             name=f"ppo_exp{exp_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -1181,8 +1195,6 @@ def main():
         )
 
         # Save config
-        exp_artifact_dir = ARTIFACT_BASE_DIR / f"experiment_{exp_num}"
-        exp_artifact_dir.mkdir(parents=True, exist_ok=True)
         config_path = exp_artifact_dir / "experiment_config.json"
         config.save(str(config_path))
         logger(f'Experiment config saved to: {config_path}', "INFO")
