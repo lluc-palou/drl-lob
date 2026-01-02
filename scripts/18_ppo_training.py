@@ -1,26 +1,25 @@
 """
-PPO Agent Training Script (Stage 18)
+PPO Agent Training Script (Stage 21)
+
+TRAIN MODE: Trains PPO agents using CPCV (train/val split)
+TEST MODE: Trains on full split_0 (train+val) and evaluates on test_data
 
 Trains PPO agents for limit order book trading using VQ-VAE latent representations
 and hand-crafted features.
 
-This is Stage 18 in the pipeline - follows synthetic generation (Stage 17) or can use
-VQ-VAE production training output (Stage 14) directly.
+Train Mode:
+- Input: split_X_input (role='train' for training, role='validation' for eval)
+- Output: CPCV train/val metrics, best models per split
+- Saves to: artifacts/ppo_training/experiment_X/split_Y/
 
-Input: split_X_input collections in database 'raw' with:
-       - codebook: VQ-VAE latent codes [0-127]
-       - features: hand-crafted features (18 dimensions)
-       - target: forward returns
-       - timestamp: Unix timestamps
-       - role: 'train' or 'validation'
-       - fold_id: fold identifier
-
-Output: Trained PPO agents saved to artifacts/ppo_agents/
-        MLflow tracking with training metrics
-        Checkpoints for best models per split
+Test Mode:
+- Input: split_0_input (all roles for training), test_data (for evaluation)
+- Output: Final test metrics (Sharpe for all fee scenarios)
+- Saves to: artifacts/ppo_training/test/experiment_X/
 
 Usage:
-    python scripts/18_ppo_training.py
+    TRAIN: python scripts/18_ppo_training.py --experiment 1 --mode train
+    TEST:  python scripts/18_ppo_training.py --experiment 1 --mode test --test-split 0
 """
 
 import os
@@ -1073,6 +1072,229 @@ def train_split(
     }
 
 
+def train_test_mode(
+    test_split: int,
+    config: ExperimentConfig,
+    device: torch.device
+):
+    """
+    Train PPO agent on full test_split (train+val combined) and evaluate on test_data.
+
+    NOTE: This function requires modifications to EpisodeLoader in src.ppo:
+      1. load_episodes(split_id, role=None) should load all roles when role=None
+      2. load_test_episodes() method should load from 'test_data' collection
+
+    Args:
+        test_split: Split ID to use for training (all roles combined)
+        config: Experiment configuration
+        device: Training device
+
+    Returns:
+        Dictionary with test results
+    """
+    logger('', "INFO")
+    logger(f'Training agent on full split_{test_split} (train+val combined)...', "INFO")
+    logger('Will evaluate on test_data collection', "INFO")
+
+    # Get experiment type from config
+    experiment_type = config.data.experiment_type
+
+    # Initialize episode loader
+    data_config = config.data
+    data_config.split_ids = [test_split]
+
+    episode_loader = EpisodeLoader(data_config, episode_chunk_size=EPISODE_CHUNK_SIZE)
+
+    # Load ALL episodes from test_split (no role filter - both train and val)
+    logger('Loading training episodes (full split - train+val combined)...', "INFO")
+    train_episodes = episode_loader.load_episodes(test_split, role=None)  # None = all roles
+    logger(f'  Loaded {len(train_episodes)} training episodes from full split_{test_split}', "INFO")
+
+    # Load test episodes from test_data collection
+    logger('Loading test episodes from test_data...', "INFO")
+    test_episodes = episode_loader.load_test_episodes()  # Special method for test_data
+    logger(f'  Loaded {len(test_episodes)} test episodes', "INFO")
+
+    # Initialize agent based on experiment type
+    logger(f'Initializing agent for Experiment {experiment_type.value}...', "INFO")
+    if experiment_type == ExperimentType.EXP1_BOTH_ORIGINAL:
+        agent = ActorCriticTransformer(config.model).to(device)
+    elif experiment_type == ExperimentType.EXP2_FEATURES_ORIGINAL:
+        agent = ActorCriticFeatures(config.model).to(device)
+    else:  # EXP3_CODEBOOK_ORIGINAL
+        agent = ActorCriticCodebook(config.model).to(device)
+
+    optimizer = optim.Adam(
+        agent.parameters(),
+        lr=config.ppo.learning_rate,
+        weight_decay=config.ppo.weight_decay
+    )
+
+    # Learning rate scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.3, patience=2, min_lr=1e-6
+    )
+
+    logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.3, patience=2)', "INFO")
+    logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, activity={config.ppo.activity_coef}', "INFO")
+
+    # Setup CSV logging for epoch results
+    results_csv_path = LOG_DIR / f"test_split_{test_split}_epoch_results.csv"
+    csv_header = [
+        'epoch',
+        # Training metrics (full split)
+        'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
+        'train_avg_reward', 'train_avg_pnl',
+        'train_policy_loss', 'train_value_loss', 'train_entropy',
+        'train_uncertainty', 'train_activity',
+        # Test metrics (test_data)
+        'test_sharpe_buyhold', 'test_sharpe_taker', 'test_sharpe_maker_neutral', 'test_sharpe_maker_rebate',
+        'test_avg_reward', 'test_avg_pnl',
+        'test_policy_loss', 'test_value_loss', 'test_entropy',
+        'test_uncertainty', 'test_activity',
+        'learning_rate'
+    ]
+
+    # Create CSV file with header
+    with open(results_csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(csv_header)
+
+    logger(f'Epoch results will be logged to: {results_csv_path}', "INFO")
+
+    # Training loop
+    metrics_logger = MetricsLogger(log_dir=str(LOG_DIR))
+    best_test_sharpe = float('-inf')
+    patience_counter = 0
+
+    for epoch in range(config.training.max_epochs):
+        epoch_start = time.time()
+
+        logger('', "INFO")
+        logger(f'Epoch {epoch + 1}/{config.training.max_epochs}', "INFO")
+
+        # Training on full split
+        train_metrics = train_epoch(
+            agent, optimizer, train_episodes,
+            config.ppo, config.reward, config.model, experiment_type, device
+        )
+
+        logger(f'  Train (Full Split) - Avg Reward: {train_metrics["avg_reward"]:.4f}, '
+               f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+        logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
+               f'Value: {train_metrics["avg_value_loss"]:.4f}, '
+               f'Entropy: {train_metrics["avg_entropy"]:.4f}, '
+               f'Uncertainty: {train_metrics["avg_uncertainty"]:.4f}, '
+               f'Activity: {train_metrics["avg_activity"]:.4f}', "INFO")
+
+        # Test evaluation (every epoch)
+        test_metrics = validate_epoch(
+            agent, test_episodes, config.reward, config.model, config.ppo, experiment_type, device
+        )
+
+        logger(f'  Test (test_data) - Avg Reward: {test_metrics["avg_reward"]:.4f}, '
+               f'Avg PnL: {test_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {test_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {test_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):            {test_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {test_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+
+        # Update learning rate based on test Sharpe
+        scheduler.step(test_metrics["sharpe"])
+        current_lr = optimizer.param_groups[0]['lr']
+        logger(f'  Learning rate: {current_lr:.6f}', "INFO")
+
+        # Log to MLflow
+        mlflow.log_metric("train_sharpe", train_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("train_sharpe_buyhold", train_metrics["sharpe_raw"], step=epoch)
+        mlflow.log_metric("train_sharpe_taker", train_metrics["sharpe_taker"], step=epoch)
+        mlflow.log_metric("train_sharpe_maker_neutral", train_metrics["sharpe_maker_neutral"], step=epoch)
+        mlflow.log_metric("train_sharpe_maker_rebate", train_metrics["sharpe_maker_rebate"], step=epoch)
+        mlflow.log_metric("train_avg_reward", train_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("train_avg_pnl", train_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("train_policy_loss", train_metrics["avg_policy_loss"], step=epoch)
+        mlflow.log_metric("train_value_loss", train_metrics["avg_value_loss"], step=epoch)
+        mlflow.log_metric("train_entropy", train_metrics["avg_entropy"], step=epoch)
+        mlflow.log_metric("train_uncertainty", train_metrics["avg_uncertainty"], step=epoch)
+        mlflow.log_metric("train_activity", train_metrics["avg_activity"], step=epoch)
+
+        mlflow.log_metric("test_sharpe", test_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("test_sharpe_buyhold", test_metrics["sharpe_raw"], step=epoch)
+        mlflow.log_metric("test_sharpe_taker", test_metrics["sharpe_taker"], step=epoch)
+        mlflow.log_metric("test_sharpe_maker_neutral", test_metrics["sharpe_maker_neutral"], step=epoch)
+        mlflow.log_metric("test_sharpe_maker_rebate", test_metrics["sharpe_maker_rebate"], step=epoch)
+        mlflow.log_metric("test_avg_reward", test_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("test_avg_pnl", test_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("test_policy_loss", test_metrics["policy_loss"], step=epoch)
+        mlflow.log_metric("test_value_loss", test_metrics["value_loss"], step=epoch)
+        mlflow.log_metric("test_entropy", test_metrics["entropy"], step=epoch)
+        mlflow.log_metric("test_uncertainty", test_metrics["uncertainty"], step=epoch)
+        mlflow.log_metric("test_activity", test_metrics["activity"], step=epoch)
+        mlflow.log_metric("learning_rate", current_lr, step=epoch)
+
+        # Log epoch results to CSV file
+        with open(results_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch + 1,
+                # Training metrics
+                train_metrics["sharpe_raw"], train_metrics["sharpe_taker"],
+                train_metrics["sharpe_maker_neutral"], train_metrics["sharpe_maker_rebate"],
+                train_metrics["avg_reward"], train_metrics["avg_pnl"],
+                train_metrics["avg_policy_loss"], train_metrics["avg_value_loss"],
+                train_metrics["avg_entropy"], train_metrics["avg_uncertainty"],
+                train_metrics["avg_activity"],
+                # Test metrics
+                test_metrics["sharpe_raw"], test_metrics["sharpe_taker"],
+                test_metrics["sharpe_maker_neutral"], test_metrics["sharpe_maker_rebate"],
+                test_metrics["avg_reward"], test_metrics["avg_pnl"],
+                test_metrics["policy_loss"], test_metrics["value_loss"],
+                test_metrics["entropy"], test_metrics["uncertainty"],
+                test_metrics["activity"],
+                current_lr
+            ])
+
+        # Check for improvement
+        if test_metrics["sharpe"] > best_test_sharpe:
+            best_test_sharpe = test_metrics["sharpe"]
+            patience_counter = 0
+
+            # Save best model
+            save_checkpoint(
+                agent, optimizer, epoch, test_split, test_metrics["sharpe"],
+                checkpoint_dir=str(CHECKPOINT_DIR)
+            )
+            logger(f'  ✓ New best model saved (Test Sharpe: {best_test_sharpe:.4f})', "INFO")
+        else:
+            patience_counter += 1
+
+        # Early stopping
+        if patience_counter >= config.training.patience:
+            logger(f'  Early stopping triggered (patience: {config.training.patience})', "INFO")
+            break
+
+        epoch_time = time.time() - epoch_start
+        logger(f'  Epoch time: {epoch_time:.2f}s', "INFO")
+
+    episode_loader.close()
+
+    return {
+        'best_test_sharpe': best_test_sharpe,
+        'best_test_sharpe_buyhold': test_metrics["sharpe_raw"],
+        'best_test_sharpe_taker': test_metrics["sharpe_taker"],
+        'best_test_sharpe_maker_neutral': test_metrics["sharpe_maker_neutral"],
+        'best_test_sharpe_maker_rebate': test_metrics["sharpe_maker_rebate"],
+        'epochs_trained': epoch + 1
+    }
+
+
 # =================================================================================================
 # Main Execution
 # =================================================================================================
@@ -1085,16 +1307,20 @@ def main():
     global CHECKPOINT_DIR, LOG_DIR
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='PPO Agent Training with Different Experiments')
+    parser = argparse.ArgumentParser(description='PPO Agent Training (Stage 21) with Train/Test Modes')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                        help='Pipeline mode: train (CPCV on splits) or test (full split + test_data eval)')
+    parser.add_argument('--test-split', type=int, default=0,
+                        help='[TEST MODE] Split ID to use for full training (default: 0)')
     parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3, 4],
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
                              '3=Codebook only (original), 4=Codebook (synthetic). '
                              'If not specified, runs all experiments sequentially.')
     parser.add_argument('--splits', type=str, default=None,
-                        help='Comma-separated list of split IDs to train (e.g., "0,1,2"). '
+                        help='[TRAIN MODE] Comma-separated list of split IDs to train (e.g., "0,1,2"). '
                              'If not specified, trains on all available splits.')
     parser.add_argument('--max-splits', type=int, default=None,
-                        help='Maximum number of splits to train on (uses first N splits). '
+                        help='[TRAIN MODE] Maximum number of splits to train on (uses first N splits). '
                              'Useful for quick testing.')
     args = parser.parse_args()
 
@@ -1152,14 +1378,34 @@ def main():
     # Setup MLflow
     logger('', "INFO")
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+    # Adjust experiment name and artifact directory based on mode
+    if args.mode == 'test':
+        experiment_name = f"{MLFLOW_EXPERIMENT_NAME}_Test"
+        artifact_base_dir = ARTIFACT_BASE_DIR.parent / "test"
+        logger('', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'PPO TRAINING - TEST MODE (STAGE 21)', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'Training on full split_{args.test_split} (train+val combined)', "INFO")
+        logger(f'Evaluating on test_data collection', "INFO")
+        logger('', "INFO")
+    else:
+        experiment_name = MLFLOW_EXPERIMENT_NAME
+        artifact_base_dir = ARTIFACT_BASE_DIR
+        logger('', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'PPO TRAINING - TRAIN MODE (STAGE 21)', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'Using CPCV on {len(split_ids)} splits', "INFO")
+        logger('', "INFO")
+
+    mlflow.set_experiment(experiment_name)
     logger(f'MLflow tracking URI: {MLFLOW_TRACKING_URI}', "INFO")
-    logger(f'MLflow experiment: {MLFLOW_EXPERIMENT_NAME}', "INFO")
+    logger(f'MLflow experiment: {experiment_name}', "INFO")
 
     # Create artifact directories
-    ARTIFACT_BASE_DIR.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    artifact_base_dir.mkdir(parents=True, exist_ok=True)
 
     # Run each experiment
     for exp_num in experiments_to_run:
@@ -1167,12 +1413,12 @@ def main():
 
         logger('', "INFO")
         logger('=' * 100, "INFO")
-        logger(f'PPO AGENT TRAINING - EXPERIMENT {exp_num} (STAGE 18)', "INFO")
+        logger(f'PPO AGENT TRAINING - EXPERIMENT {exp_num} (STAGE 21)', "INFO")
         logger('=' * 100, "INFO")
         logger(f'Experiment: {selected_experiment.name}', "INFO")
 
-        # Create experiment-specific directories for parallel execution isolation
-        exp_artifact_dir = ARTIFACT_BASE_DIR / f"experiment_{exp_num}"
+        # Create experiment-specific directories
+        exp_artifact_dir = artifact_base_dir / f"experiment_{exp_num}"
         CHECKPOINT_DIR = exp_artifact_dir / "checkpoints"
         LOG_DIR = exp_artifact_dir / "logs"
 
@@ -1181,7 +1427,7 @@ def main():
         CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
         LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Create experiment config with selected experiment type
+        # Create experiment config
         config = ExperimentConfig(
             name=f"ppo_exp{exp_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             model=ModelConfig(window_size=WINDOW_SIZE, horizon=HORIZON),
@@ -1190,7 +1436,7 @@ def main():
             training=TrainingConfig(device=str(device)),
             data=DataConfig(
                 database_name=DB_NAME,
-                split_ids=split_ids,
+                split_ids=split_ids if args.mode == 'train' else [args.test_split],
                 experiment_type=selected_experiment
             )
         )
@@ -1205,20 +1451,23 @@ def main():
         logger('Training Configuration:', "INFO")
         logger(f'  Max epochs: {config.training.max_epochs}', "INFO")
         logger(f'  Episodes per epoch: ALL (no limit)', "INFO")
-        logger(f'  Splits to train: {len(split_ids)}', "INFO")
+        if args.mode == 'train':
+            logger(f'  Splits to train: {len(split_ids)}', "INFO")
+        else:
+            logger(f'  Training on: full split_{args.test_split} (train+val combined)', "INFO")
+            logger(f'  Evaluating on: test_data collection', "INFO")
         logger(f'  Early stopping patience: {config.training.patience} epochs', "INFO")
 
-        # Estimate training time (assuming ~40 train episodes per split, ~30s per episode)
-        # Each epoch processes ALL training episodes
-        # Early stopping (patience=3) will likely stop around epoch 5-7
-        estimated_episodes_per_split = 40  # typical 80% of ~50 total episodes
-        estimated_time_per_epoch = (estimated_episodes_per_split * 30) / 3600  # hours
-        estimated_time_per_split_max = config.training.max_epochs * estimated_time_per_epoch
-        estimated_time_per_split_typical = 5 * estimated_time_per_epoch  # with early stopping
-        total_estimated_time_max = estimated_time_per_split_max * len(split_ids)
-        total_estimated_time_typical = estimated_time_per_split_typical * len(split_ids)
-        logger(f'  Estimated time per split: ~{estimated_time_per_split_typical:.1f}h (typical) to {estimated_time_per_split_max:.1f}h (max)', "INFO")
-        logger(f'  Total estimated time: ~{total_estimated_time_typical:.1f}h (typical) to {total_estimated_time_max:.1f}h (max)', "INFO")
+        if args.mode == 'train':
+            # Estimate training time for train mode
+            estimated_episodes_per_split = 40  # typical 80% of ~50 total episodes
+            estimated_time_per_epoch = (estimated_episodes_per_split * 30) / 3600  # hours
+            estimated_time_per_split_max = config.training.max_epochs * estimated_time_per_epoch
+            estimated_time_per_split_typical = 5 * estimated_time_per_epoch  # with early stopping
+            total_estimated_time_max = estimated_time_per_split_max * len(split_ids)
+            total_estimated_time_typical = estimated_time_per_split_typical * len(split_ids)
+            logger(f'  Estimated time per split: ~{estimated_time_per_split_typical:.1f}h (typical) to {estimated_time_per_split_max:.1f}h (max)', "INFO")
+            logger(f'  Total estimated time: ~{total_estimated_time_typical:.1f}h (typical) to {total_estimated_time_max:.1f}h (max)', "INFO")
 
         # Main training loop for this experiment
         with mlflow.start_run(run_name=config.name):
@@ -1226,49 +1475,89 @@ def main():
             mlflow.log_params(config.to_dict())
             mlflow.log_artifact(str(config_path))
 
-            # Train on each split
-            all_results = {}
+            if args.mode == 'train':
+                # TRAIN MODE: CPCV training on splits
+                all_results = {}
 
-            for split_id in split_ids:
+                for split_id in split_ids:
+                    logger('', "INFO")
+                    logger('=' * 100, "INFO")
+                    logger(f'SPLIT {split_id}', "INFO")
+                    logger('=' * 100, "INFO")
+
+                    with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
+                        mlflow.log_param("split_id", split_id)
+                        mlflow.log_param("experiment_type", exp_num)
+                        mlflow.log_param("mode", "train")
+
+                        results = train_split(split_id, config, device)
+                        all_results[split_id] = results
+
+                        mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
+                        mlflow.log_metric("epochs_trained", results['epochs_trained'])
+
+                        logger('', "INFO")
+                        logger(f'Split {split_id} complete:', "INFO")
+                        logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
+                        logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
+
+                # Summary for this experiment
                 logger('', "INFO")
                 logger('=' * 100, "INFO")
-                logger(f'SPLIT {split_id}', "INFO")
+                logger(f'EXPERIMENT {exp_num} COMPLETE (TRAIN MODE)', "INFO")
                 logger('=' * 100, "INFO")
 
-                with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
-                    mlflow.log_param("split_id", split_id)
-                    mlflow.log_param("experiment_type", exp_num)
+                avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
+                logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
+                logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
 
-                    results = train_split(split_id, config, device)
-                    all_results[split_id] = results
+                mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
 
-                    mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
-                    mlflow.log_metric("epochs_trained", results['epochs_trained'])
+            else:
+                # TEST MODE: Train on full split, evaluate on test_data
+                logger('', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'TEST SPLIT {args.test_split} (FULL)', "INFO")
+                logger('=' * 100, "INFO")
 
-                    logger('', "INFO")
-                    logger(f'Split {split_id} complete:', "INFO")
-                    logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
-                    logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
+                mlflow.log_param("test_split", args.test_split)
+                mlflow.log_param("experiment_type", exp_num)
+                mlflow.log_param("mode", "test")
 
-            # Summary for this experiment
-            logger('', "INFO")
-            logger('=' * 100, "INFO")
-            logger(f'EXPERIMENT {exp_num} COMPLETE', "INFO")
-            logger('=' * 100, "INFO")
+                results = train_test_mode(args.test_split, config, device)
 
-            avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
-            logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
-            logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
+                # Log test metrics
+                mlflow.log_metric("best_test_sharpe", results['best_test_sharpe'])
+                mlflow.log_metric("best_test_sharpe_buyhold", results['best_test_sharpe_buyhold'])
+                mlflow.log_metric("best_test_sharpe_taker", results['best_test_sharpe_taker'])
+                mlflow.log_metric("best_test_sharpe_maker_neutral", results['best_test_sharpe_maker_neutral'])
+                mlflow.log_metric("best_test_sharpe_maker_rebate", results['best_test_sharpe_maker_rebate'])
+                mlflow.log_metric("epochs_trained", results['epochs_trained'])
 
-            mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
+                # Summary
+                logger('', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'EXPERIMENT {exp_num} COMPLETE (TEST MODE)', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'Test Sharpe Ratios (best epoch):', "INFO")
+                logger(f'  Buy-and-Hold (baseline):  {results["best_test_sharpe_buyhold"]:.4f}', "INFO")
+                logger(f'  Taker (5 bps):            {results["best_test_sharpe_taker"]:.4f}', "INFO")
+                logger(f'  Maker (0 bps):            {results["best_test_sharpe_maker_neutral"]:.4f}', "INFO")
+                logger(f'  Maker Rebate (-2.5 bps):  {results["best_test_sharpe_maker_rebate"]:.4f}', "INFO")
+                logger(f'Epochs trained: {results["epochs_trained"]}', "INFO")
+                logger(f'Model saved to: {CHECKPOINT_DIR}', "INFO")
 
     # Final summary
     logger('', "INFO")
     logger('=' * 100, "INFO")
-    logger('ALL EXPERIMENTS COMPLETE', "INFO")
+    logger(f'ALL EXPERIMENTS COMPLETE ({args.mode.upper()} MODE)', "INFO")
     logger('=' * 100, "INFO")
     logger(f'Completed {len(experiments_to_run)} experiment(s)', "INFO")
     logger(f'MLflow tracking: {MLFLOW_TRACKING_URI}', "INFO")
+    if args.mode == 'test':
+        logger(f'Test results saved to: {artifact_base_dir}', "INFO")
+    else:
+        logger(f'Training results saved to: {artifact_base_dir}', "INFO")
 
 
 if __name__ == "__main__":
@@ -1287,7 +1576,7 @@ if __name__ == "__main__":
 
         logger('', "INFO")
         logger(f'Total execution time: {hours}h {minutes}m {seconds}s', "INFO")
-        logger('Stage 17 completed successfully', "INFO")
+        logger('Stage 21 completed successfully', "INFO")
 
     except Exception as e:
         logger(f'ERROR: {str(e)}', "ERROR")
