@@ -1,20 +1,16 @@
 """
-Apply EWMA Standardization Script
+Apply EWMA Standardization Script (Stage 12)
 
-Applies EWMA standardization using selected half-life parameters from Stage 10.
-
-This is Stage 11 in the pipeline - it follows half-life selection (Stage 10).
+TRAIN MODE: Applies EWMA standardization to split_X_input collections
+TEST MODE: Applies EWMA standardization to test_data using half-lives from split_0
 
 Usage:
-    # Process all splits sequentially
-    python scripts/11_apply_feature_standardization.py
+    TRAIN: python scripts/11_apply_feature_standardization.py --mode train
+    TEST:  python scripts/11_apply_feature_standardization.py --mode test --test-split 0
 
-    # Process specific splits (for parallel execution)
-    python scripts/11_apply_feature_standardization.py --splits 0,1,2,3
-
-    # Process 2 splits in parallel (recommended with 35% CPU, 70% RAM)
-    python scripts/11_apply_feature_standardization.py --splits 0,2,4,6,8,10,12,14 &
-    python scripts/11_apply_feature_standardization.py --splits 1,3,5,7,9,11,13,15 &
+    # For parallel execution in train mode:
+    python scripts/11_apply_feature_standardization.py --mode train --splits 0,2,4,6,8 &
+    python scripts/11_apply_feature_standardization.py --mode train --splits 1,3,5,7,9 &
 """
 
 import os
@@ -62,12 +58,24 @@ DRIVER_MEMORY = "4g"
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Apply EWMA standardization to split collections')
+    parser = argparse.ArgumentParser(description='Apply EWMA standardization to collections')
+    parser.add_argument(
+        '--mode',
+        choices=['train', 'test'],
+        default='train',
+        help='Pipeline mode: train (standardize splits) or test (standardize test_data)'
+    )
+    parser.add_argument(
+        '--test-split',
+        type=int,
+        default=0,
+        help='Split ID to use for half-lives in test mode (default: 0)'
+    )
     parser.add_argument(
         '--splits',
         type=str,
         default=None,
-        help='Comma-separated list of split IDs to process (e.g., "0,1,2,3"). If not specified, processes all splits.'
+        help='[TRAIN MODE ONLY] Comma-separated list of split IDs to process (e.g., "0,1,2,3"). If not specified, processes all splits.'
     )
     return parser.parse_args()
 
@@ -77,16 +85,23 @@ def main():
     # Parse command line arguments
     args = parse_args()
 
+    mode = args.mode
+    test_split = args.test_split
+
     logger('=' * 80, "INFO")
-    logger('APPLY EWMA STANDARDIZATION', "INFO")
+    logger(f'APPLY EWMA STANDARDIZATION (STAGE 12) - {mode.upper()} MODE', "INFO")
     logger('=' * 80, "INFO")
 
-    if args.splits:
-        requested_splits = [int(s.strip()) for s in args.splits.split(',')]
-        logger(f'Processing specific splits: {requested_splits}', "INFO")
-    else:
+    if mode == 'train':
+        if args.splits:
+            requested_splits = [int(s.strip()) for s in args.splits.split(',')]
+            logger(f'Processing specific splits: {requested_splits}', "INFO")
+        else:
+            requested_splits = None
+            logger('Processing all available splits', "INFO")
+    else:  # test mode
+        logger(f'Processing test_data using half-lives from split_{test_split}', "INFO")
         requested_splits = None
-        logger('Processing all available splits', "INFO")
     
     # Load half-life results from Stage 10
     if not HALFLIFE_RESULTS_PATH.exists():
@@ -106,157 +121,241 @@ def main():
     if len(final_halflifes) > 5:
         logger(f'  ... and {len(final_halflifes) - 5} more', "INFO")
     
-    # Create Spark session (uses default 8GB driver memory and jar path)
+    # Create Spark session
     logger('Initializing Spark...', "INFO")
     spark = create_spark_session(
-        app_name="EWMAStandardization",
+        app_name=f"EWMAStandardization_{mode.title()}",
         db_name=DB_NAME,
         mongo_uri=MONGO_URI
     )
-    
+
     try:
-        # Get feature names from first split
-        logger('Identifying features...', "INFO")
-        first_split = f"{INPUT_COLLECTION_PREFIX}0{INPUT_COLLECTION_SUFFIX}"
-        logger(f'Loading from collection: {first_split}', "INFO")
-        
-        sample_df = (
-            spark.read.format("mongodb")
-            .option("database", DB_NAME)
-            .option("collection", first_split)
-            .load()
-            .limit(1)
-        )
-        
-        count = sample_df.count()
-        if count == 0:
-            raise ValueError(f"Collection '{first_split}' is empty!")
-        
-        all_feature_names = identify_feature_names(sample_df)
-        
-        logger(f'Total features: {len(all_feature_names)}', "INFO")
-        logger(f'Standardizing: {len(final_halflifes)} features', "INFO")
+        if mode == 'train':
+            # TRAIN MODE: Process splits
+            # Get feature names from first split
+            logger('Identifying features...', "INFO")
+            first_split = f"{INPUT_COLLECTION_PREFIX}0{INPUT_COLLECTION_SUFFIX}"
+            logger(f'Loading from collection: {first_split}', "INFO")
 
-        # Discover all split collections
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        db = client[DB_NAME]
-        all_collections = db.list_collection_names()
+            sample_df = (
+                spark.read.format("mongodb")
+                .option("database", DB_NAME)
+                .option("collection", first_split)
+                .load()
+                .limit(1)
+            )
 
-        # Extract split IDs from collection names matching pattern
-        import re
-        split_pattern = re.compile(rf'^{INPUT_COLLECTION_PREFIX}(\d+){INPUT_COLLECTION_SUFFIX}$')
-        split_ids = []
-        for coll_name in all_collections:
-            match = split_pattern.match(coll_name)
-            if match:
-                split_ids.append(int(match.group(1)))
-        split_ids = sorted(split_ids)
-        client.close()
+            count = sample_df.count()
+            if count == 0:
+                raise ValueError(f"Collection '{first_split}' is empty!")
 
-        if not split_ids:
-            raise ValueError(f'No split collections found matching pattern: {INPUT_COLLECTION_PREFIX}X{INPUT_COLLECTION_SUFFIX}')
+            all_feature_names = identify_feature_names(sample_df)
 
-        logger(f'Found {len(split_ids)} split collections: {split_ids}', "INFO")
+            logger(f'Total features: {len(all_feature_names)}', "INFO")
+            logger(f'Standardizing: {len(final_halflifes)} features', "INFO")
 
-        # Filter to requested splits if specified
-        if requested_splits is not None:
-            split_ids = [sid for sid in split_ids if sid in requested_splits]
+            # Discover all split collections
+            from pymongo import MongoClient
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+            all_collections = db.list_collection_names()
+
+            # Extract split IDs from collection names matching pattern
+            import re
+            split_pattern = re.compile(rf'^{INPUT_COLLECTION_PREFIX}(\d+){INPUT_COLLECTION_SUFFIX}$')
+            split_ids = []
+            for coll_name in all_collections:
+                match = split_pattern.match(coll_name)
+                if match:
+                    split_ids.append(int(match.group(1)))
+            split_ids = sorted(split_ids)
+            client.close()
+
             if not split_ids:
-                raise ValueError(f'None of the requested splits {requested_splits} were found in database')
-            logger(f'Filtered to requested splits: {split_ids}', "INFO")
-        else:
-            logger(f'Processing all {len(split_ids)} splits', "INFO")
+                raise ValueError(f'No split collections found matching pattern: {INPUT_COLLECTION_PREFIX}X{INPUT_COLLECTION_SUFFIX}')
 
-        # CRITICAL: Create timestamp indexes on all split collections for efficient hourly queries
-        # Without these indexes, each hourly query performs a full collection scan O(N)
-        # With indexes: O(log N + matches) - reduces processing time dramatically
-        logger('', "INFO")
-        logger('Creating timestamp indexes on all split collections...', "INFO")
-        from pymongo import ASCENDING
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        db = client[DB_NAME]
+            logger(f'Found {len(split_ids)} split collections: {split_ids}', "INFO")
 
-        for split_id in split_ids:
-            input_collection = f"{INPUT_COLLECTION_PREFIX}{split_id}{INPUT_COLLECTION_SUFFIX}"
-            input_coll = db[input_collection]
+            # Filter to requested splits if specified
+            if requested_splits is not None:
+                split_ids = [sid for sid in split_ids if sid in requested_splits]
+                if not split_ids:
+                    raise ValueError(f'None of the requested splits {requested_splits} were found in database')
+                logger(f'Filtered to requested splits: {split_ids}', "INFO")
+            else:
+                logger(f'Processing all {len(split_ids)} splits', "INFO")
 
-            # Check if index already exists
-            existing_indexes = list(input_coll.list_indexes())
+            # Create timestamp indexes
+            logger('', "INFO")
+            logger('Creating timestamp indexes on all split collections...', "INFO")
+            from pymongo import ASCENDING
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+
+            for split_id in split_ids:
+                input_collection = f"{INPUT_COLLECTION_PREFIX}{split_id}{INPUT_COLLECTION_SUFFIX}"
+                input_coll = db[input_collection]
+
+                existing_indexes = list(input_coll.list_indexes())
+                has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
+
+                if not has_timestamp_index:
+                    logger(f'  Creating index on {input_collection}...', "INFO")
+                    input_coll.create_index([("timestamp", ASCENDING)], background=False)
+                else:
+                    logger(f'  Index already exists on {input_collection}', "INFO")
+
+            client.close()
+            logger('Timestamp indexes created/verified on all split collections', "INFO")
+            logger('', "INFO")
+
+            # Initialize applicator
+            applicator = EWMAStandardizationApplicator(
+                spark=spark,
+                db_name=DB_NAME,
+                final_halflifes=final_halflifes,
+                clip_std=CLIP_STD
+            )
+
+            # Process each split
+            for split_id in split_ids:
+                logger('', "INFO")
+
+                # Apply standardization
+                total_processed = applicator.apply_to_split(
+                    split_id=split_id,
+                    feature_names=all_feature_names,
+                    input_collection_prefix=INPUT_COLLECTION_PREFIX,
+                    input_collection_suffix=INPUT_COLLECTION_SUFFIX,
+                    output_collection_prefix=OUTPUT_COLLECTION_PREFIX,
+                    output_collection_suffix=OUTPUT_COLLECTION_SUFFIX
+                )
+
+                # Reset scalers for next split
+                applicator.scalers = {
+                    feat: type(scaler)(scaler.half_life)
+                    for feat, scaler in applicator.scalers.items()
+                }
+
+            # Summary
+            logger('', "INFO")
+            logger('=' * 80, "INFO")
+            logger('EWMA STANDARDIZATION COMPLETE (TRAIN MODE)', "INFO")
+            logger('=' * 80, "INFO")
+            logger(f'Processed {len(split_ids)} splits', "INFO")
+
+            # Rename collections: output -> input
+            logger('', "INFO")
+            logger('Renaming collections for cyclic pattern...', "INFO")
+
+            from pymongo import MongoClient
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+
+            for split_id in split_ids:
+                output_collection = f"{OUTPUT_COLLECTION_PREFIX}{split_id}{OUTPUT_COLLECTION_SUFFIX}"
+                input_collection = f"{INPUT_COLLECTION_PREFIX}{split_id}{INPUT_COLLECTION_SUFFIX}"
+
+                # Drop old input collection if exists
+                if input_collection in db.list_collection_names():
+                    db[input_collection].drop()
+                    logger(f'  Dropped old {input_collection}', "INFO")
+
+                # Rename output -> input
+                db[output_collection].rename(input_collection)
+                logger(f'  Renamed {output_collection} -> {input_collection}', "INFO")
+
+            client.close()
+
+            logger('', "INFO")
+            logger('Collection renaming complete', "INFO")
+            if split_ids:
+                logger(f'Next stage will read from: {INPUT_COLLECTION_PREFIX}{{0-{split_ids[-1]}}}{INPUT_COLLECTION_SUFFIX}', "INFO")
+
+        else:  # TEST MODE
+            # TEST MODE: Apply standardization to test_data
+            logger('Identifying features from test_data...', "INFO")
+
+            sample_df = (
+                spark.read.format("mongodb")
+                .option("database", DB_NAME)
+                .option("collection", "test_data")
+                .load()
+                .limit(1)
+            )
+
+            count = sample_df.count()
+            if count == 0:
+                raise ValueError("test_data collection is empty!")
+
+            all_feature_names = identify_feature_names(sample_df)
+
+            logger(f'Total features: {len(all_feature_names)}', "INFO")
+            logger(f'Standardizing: {len(final_halflifes)} features', "INFO")
+
+            # Create timestamp index on test_data
+            logger('', "INFO")
+            logger('Creating timestamp index on test_data collection...', "INFO")
+            from pymongo import ASCENDING, MongoClient
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+
+            test_coll = db['test_data']
+            existing_indexes = list(test_coll.list_indexes())
             has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
 
             if not has_timestamp_index:
-                logger(f'  Creating index on {input_collection}...', "INFO")
-                input_coll.create_index([("timestamp", ASCENDING)], background=False)
+                logger('  Creating index on test_data...', "INFO")
+                test_coll.create_index([("timestamp", ASCENDING)], background=False)
             else:
-                logger(f'  Index already exists on {input_collection}', "INFO")
+                logger('  Index already exists on test_data', "INFO")
 
-        client.close()
-        logger('Timestamp indexes created/verified on all split collections', "INFO")
-        logger('', "INFO")
+            client.close()
+            logger('Timestamp index created/verified', "INFO")
+            logger('', "INFO")
 
-        # Initialize applicator
-        applicator = EWMAStandardizationApplicator(
-            spark=spark,
-            db_name=DB_NAME,
-            final_halflifes=final_halflifes,
-            clip_std=CLIP_STD
-        )
-
-        # Process each split
-        for split_id in split_ids:
-            logger('', "INFO")  # Blank line
-            
-            # Apply standardization
-            total_processed = applicator.apply_to_split(
-                split_id=split_id,
-                feature_names=all_feature_names,
-                input_collection_prefix=INPUT_COLLECTION_PREFIX,
-                input_collection_suffix=INPUT_COLLECTION_SUFFIX,
-                output_collection_prefix=OUTPUT_COLLECTION_PREFIX,
-                output_collection_suffix=OUTPUT_COLLECTION_SUFFIX
+            # Initialize applicator
+            applicator = EWMAStandardizationApplicator(
+                spark=spark,
+                db_name=DB_NAME,
+                final_halflifes=final_halflifes,
+                clip_std=CLIP_STD
             )
-            
-            # Reset scalers for next split (each split processes independently)
-            applicator.scalers = {
-                feat: type(scaler)(scaler.half_life)
-                for feat, scaler in applicator.scalers.items()
-            }
-        
-        # Summary
-        logger('', "INFO")
-        logger('=' * 80, "INFO")
-        logger('EWMA STANDARDIZATION COMPLETE', "INFO")
-        logger('=' * 80, "INFO")
-        logger(f'Processed {len(split_ids)} splits', "INFO")
 
-        # Rename collections: output -> input (cyclic pattern for next stage)
-        logger('', "INFO")
-        logger('Renaming collections for cyclic pattern...', "INFO")
+            # Apply standardization to test_data (treating it like a split)
+            logger('Applying EWMA standardization to test_data...', "INFO")
+            logger('', "INFO")
 
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        db = client[DB_NAME]
+            total_processed = applicator.apply_to_collection(
+                input_collection='test_data',
+                output_collection='test_data_standardized',
+                feature_names=all_feature_names
+            )
 
-        for split_id in split_ids:
-            output_collection = f"{OUTPUT_COLLECTION_PREFIX}{split_id}{OUTPUT_COLLECTION_SUFFIX}"
-            input_collection = f"{INPUT_COLLECTION_PREFIX}{split_id}{INPUT_COLLECTION_SUFFIX}"
-            
-            # Drop old input collection if exists
-            if input_collection in db.list_collection_names():
-                db[input_collection].drop()
-                logger(f'  Dropped old {input_collection}', "INFO")
-            
-            # Rename output -> input
-            db[output_collection].rename(input_collection)
-            logger(f'  Renamed {output_collection} -> {input_collection}', "INFO")
-        
-        client.close()
-        
-        logger('', "INFO")
-        logger('Collection renaming complete', "INFO")
-        if split_ids:
-            logger(f'Next stage will read from: {INPUT_COLLECTION_PREFIX}{{0-{split_ids[-1]}}}{INPUT_COLLECTION_SUFFIX}', "INFO")
+            # Swap: test_data_standardized -> test_data
+            logger('', "INFO")
+            logger('Swapping standardized data to test_data...', "INFO")
+
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+
+            # Drop original test_data
+            db['test_data'].drop()
+            logger('  Dropped test_data', "INFO")
+
+            # Rename output to test_data
+            db['test_data_standardized'].rename('test_data')
+            logger('  Renamed test_data_standardized → test_data', "INFO")
+
+            client.close()
+
+            # Summary
+            logger('', "INFO")
+            logger('=' * 80, "INFO")
+            logger('EWMA STANDARDIZATION COMPLETE (TEST MODE)', "INFO")
+            logger('=' * 80, "INFO")
+            logger(f'Processed test_data collection', "INFO")
+            logger(f'Standardized data is now in test_data collection', "INFO")
         
     finally:
         # Only stop Spark if not orchestrated
