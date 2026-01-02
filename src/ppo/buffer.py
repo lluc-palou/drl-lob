@@ -133,7 +133,9 @@ class AgentState:
         self.min_pnl = float('inf')
         self.max_position = 0.0
         self.total_reward = 0.0  # Learning signal (includes directional bonus)
-        self.total_trading_return = 0.0  # Actual trading return (excludes directional bonus)
+        self.total_trading_return = 0.0  # Actual trading return with taker fee (excludes directional bonus)
+        self.total_trading_return_maker_neutral = 0.0  # Trading return with maker fee 0 bps
+        self.total_trading_return_maker_rebate = 0.0  # Trading return with maker rebate -2.5 bps
 
         # Position tracking
         self.sum_abs_position = 0.0  # For mean absolute position
@@ -155,7 +157,9 @@ class AgentState:
         unrealized_pnl: float,
         gross_pnl: float = 0.0,  # Gross PnL from current timestep
         action_std: float = 0.0,  # Policy std (agent's uncertainty/confidence)
-        trading_return: float = 0.0  # Actual trading return (excludes directional bonus)
+        trading_return: float = 0.0,  # Actual trading return with taker fee (excludes directional bonus)
+        trading_return_maker_neutral: float = 0.0,  # Trading return with maker fee 0 bps
+        trading_return_maker_rebate: float = 0.0  # Trading return with maker rebate -2.5 bps
     ):
         """
         Update agent state after taking action.
@@ -168,7 +172,9 @@ class AgentState:
             unrealized_pnl: Expected PnL from new position
             gross_pnl: Gross PnL from current position (before TC)
             action_std: Policy standard deviation (agent's learned uncertainty)
-            trading_return: Actual trading return for performance metrics (excludes directional bonus)
+            trading_return: Actual trading return for performance metrics (taker fee, excludes directional bonus)
+            trading_return_maker_neutral: Trading return with maker fee 0 bps
+            trading_return_maker_rebate: Trading return with maker rebate -2.5 bps
         """
         # Realized PnL from previous position
         realized_this_step = self.current_position * log_return
@@ -197,7 +203,9 @@ class AgentState:
         self.max_position = max(self.max_position, abs(action))
         self.sum_abs_position += abs(action)
         self.total_reward += reward  # Learning signal (with directional bonus)
-        self.total_trading_return += trading_return  # Performance metric (without directional bonus)
+        self.total_trading_return += trading_return  # Performance metric taker fee (without directional bonus)
+        self.total_trading_return_maker_neutral += trading_return_maker_neutral  # Performance with maker 0 bps
+        self.total_trading_return_maker_rebate += trading_return_maker_rebate  # Performance with maker -2.5 bps
         self.step_count += 1
 
         # Track action std (policy uncertainty)
@@ -233,8 +241,10 @@ class AgentState:
             'mean_abs_position': mean_abs_position,
             'total_reward': self.total_reward,  # Learning signal (with directional bonus)
             'avg_reward': self.total_reward / max(self.step_count, 1),
-            'total_trading_return': self.total_trading_return,  # Performance metric (without directional bonus)
+            'total_trading_return': self.total_trading_return,  # Performance taker fee (without directional bonus)
             'avg_trading_return': self.total_trading_return / max(self.step_count, 1),
+            'total_trading_return_maker_neutral': self.total_trading_return_maker_neutral,  # Performance maker 0 bps
+            'total_trading_return_maker_rebate': self.total_trading_return_maker_rebate,  # Performance maker -2.5 bps
             # Gross PnL metrics
             'cumulative_gross_pnl': self.cumulative_gross_pnl,
             'avg_gross_pnl_per_trade': avg_gross_pnl_per_trade,

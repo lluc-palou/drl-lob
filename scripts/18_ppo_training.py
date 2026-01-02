@@ -331,8 +331,22 @@ def run_episode(
         # Multi-step volatility = single-step volatility × sqrt(H)
         realized_vol = step1_vol * math.sqrt(model_config.horizon)
 
-        # Compute trading return (actual performance metric, excludes directional bonus)
+        # Compute trading returns for different fee scenarios (excludes directional bonus)
+        # Taker fee (5 bps) - current implementation for agent training
         trading_return = reward / realized_vol
+
+        # Maker fee scenarios for performance comparison (0 bps and -2.5 bps rebate)
+        position_change = abs(position_curr - position_prev)
+
+        # Maker fee neutral (0 bps)
+        tc_maker_neutral = 0.0 * position_change
+        reward_maker_neutral = gross_pnl - tc_maker_neutral
+        trading_return_maker_neutral = reward_maker_neutral / realized_vol
+
+        # Maker fee rebate (-2.5 bps)
+        tc_maker_rebate = -0.00025 * position_change
+        reward_maker_rebate = gross_pnl - tc_maker_rebate
+        trading_return_maker_rebate = reward_maker_rebate / realized_vol
 
         # Add directional bonus to reward for learning signal
         # Note: trading_return excludes bonus for accurate Sharpe calculation
@@ -350,8 +364,11 @@ def run_episode(
 
         # Update agent state with policy-based position
         # Track action_std instead of volatility (agent's learned uncertainty)
-        # Pass both reward (learning signal) and trading_return (performance metric)
-        agent_state.update(position_curr, log_return, tc, reward, unrealized, gross_pnl, action_std_val, trading_return)
+        # Pass reward (learning signal) and all trading_returns (performance metrics for different fees)
+        agent_state.update(
+            position_curr, log_return, tc, reward, unrealized, gross_pnl, action_std_val,
+            trading_return, trading_return_maker_neutral, trading_return_maker_rebate
+        )
         episode_returns.append(trading_return)  # Use trading_return for Sharpe (excludes directional bonus)
 
         # Check if episode should end
@@ -425,7 +442,9 @@ def train_epoch(
         'n_ppo_updates': 0
     }
 
-    episode_returns = []
+    episode_returns = []  # Taker fee (5 bps)
+    episode_returns_maker_neutral = []  # Maker fee 0 bps
+    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps
 
     # Use ALL training episodes each epoch
     total_episodes = len(episodes)
