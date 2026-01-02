@@ -1,24 +1,25 @@
 """
-VQ-VAE Production Training Script (Stage 13)
+VQ-VAE Production Training Script (Stage 16)
 
-Trains final VQ-VAE models using the best hyperparameter configuration from Stage 12.
-Generates latent representations for all samples in each split.
+TRAIN MODE: Trains VQ-VAE models per split using role='train' data
+TEST MODE: Trains VQ-VAE on full split_0 (train+val) and encodes test_data
 
-This is Stage 13 in the pipeline - follows hyperparameter search (Stage 12).
+Trains final VQ-VAE models using best hyperparameters from Stage 15.
 
-Input: Materialized split collections (split_0_input, split_1_input, ...)
-       in database 'tfg' with standardized LOB vectors
-       Best configuration from Stage 12 artifacts
+Train Mode:
+- Input: split_X_input collections (role='train')
+- Output: split_X_model.pth + encoded split_X_input (all roles)
+- Saves to: artifacts/vqvae_models/production/
 
-Output: K trained models saved to artifacts/vqvae_models/production/
-        K output collections (split_0_output, split_1_output, ...) with latent codes
-        Collections renamed to split_X_input for next stage
+Test Mode:
+- Input: split_0_input (all roles), test_data
+- Output: split_0_full_model.pth + encoded test_data
+- Saves to: artifacts/vqvae_models/test/
 
 Usage:
-    python scripts/13_vqvae_production_training.py
-    python scripts/13_vqvae_production_training.py --splits even  # Even splits only
-    python scripts/13_vqvae_production_training.py --splits odd   # Odd splits only
-    python scripts/13_vqvae_production_training.py --splits 0,1,2 # Specific splits
+    TRAIN: python scripts/14_vqvae_production.py --mode train
+    TRAIN: python scripts/14_vqvae_production.py --mode train --splits even
+    TEST:  python scripts/14_vqvae_production.py --mode test --test-split 0
 """
 
 import os
@@ -165,18 +166,24 @@ def filter_splits(all_splits: list, split_filter: str = None) -> list:
         except ValueError:
             raise ValueError(f"Invalid split filter: {split_filter}. Use 'even', 'odd', or comma-separated numbers")
 
-def main(split_filter: str = None):
+def main(mode: str = 'train', test_split: int = 0, split_filter: str = None):
     """Main execution function.
 
     Args:
-        split_filter: Optional filter for splits ('even', 'odd', or comma-separated list)
+        mode: Pipeline mode ('train' or 'test')
+        test_split: Split ID to use for full training in test mode
+        split_filter: Optional filter for splits in train mode ('even', 'odd', or comma-separated list)
     """
     logger('=' * 100, "INFO")
-    logger('VQ-VAE PRODUCTION TRAINING (STAGE 13)', "INFO")
+    logger(f'VQ-VAE PRODUCTION TRAINING (STAGE 16) - {mode.upper()} MODE', "INFO")
     logger('=' * 100, "INFO")
 
-    if split_filter:
+    if mode == 'train' and split_filter:
         logger(f'Split filter: {split_filter}', "INFO")
+        logger('', "INFO")
+    elif mode == 'test':
+        logger(f'Training on full split_{test_split} (train+val combined)', "INFO")
+        logger(f'Will encode test_data collection', "INFO")
         logger('', "INFO")
     
     # Load best configuration
@@ -259,47 +266,85 @@ def main(split_filter: str = None):
         client.close()
         logger(f'Timestamp indexes created/verified on {len(split_collections)} collections', "INFO")
 
-        # Discover and filter splits if needed
-        from src.vqvae_representation.data_loader import discover_splits
-        all_split_ids = discover_splits(spark, DB_NAME, COLLECTION_PREFIX, COLLECTION_SUFFIX)
-        filtered_split_ids = filter_splits(all_split_ids, split_filter) if split_filter else None
+        if mode == 'train':
+            # TRAIN MODE: Train models per split
+            # Discover and filter splits if needed
+            from src.vqvae_representation.data_loader import discover_splits
+            all_split_ids = discover_splits(spark, DB_NAME, COLLECTION_PREFIX, COLLECTION_SUFFIX)
+            filtered_split_ids = filter_splits(all_split_ids, split_filter) if split_filter else None
 
-        # Run production training
-        logger('', "INFO")
-        logger('Starting production training...', "INFO")
-        logger('', "INFO")
+            # Run production training
+            logger('', "INFO")
+            logger('Starting production training...', "INFO")
+            logger('', "INFO")
 
-        results = run_production_training(
-            spark=spark,
-            db_name=DB_NAME,
-            collection_prefix=COLLECTION_PREFIX,
-            collection_suffix=COLLECTION_SUFFIX,
-            device=device,
-            best_config=best_config,
-            mlflow_experiment_name=MLFLOW_EXPERIMENT_NAME,
-            production_dir=PRODUCTION_DIR,
-            mongo_uri=MONGO_URI,
-            use_pymongo=True,  # Use fast PyMongo loader (10-50× speedup)
-            split_ids_filter=filtered_split_ids
-        )
-        
-        # Summary
-        logger('', "INFO")
-        logger('=' * 100, "INFO")
-        logger('PRODUCTION TRAINING COMPLETE', "INFO")
-        logger('=' * 100, "INFO")
-        logger(f'Models trained: {results["num_splits"]}', "INFO")
-        logger(f'Total samples processed: {results["total_samples"]:,}', "INFO")
-        logger(f'Average validation loss: {results["avg_val_loss"]:.4f}', "INFO")
-        logger(f'Models saved to: {PRODUCTION_DIR}', "INFO")
-        logger(f'Latent collections: {COLLECTION_PREFIX}*_input (renamed)', "INFO")
-        logger(f'MLflow tracking: {MLFLOW_TRACKING_URI}', "INFO")
-        
-        logger('', "INFO")
-        logger('Next steps:', "INFO")
-        logger('  1. Review production models in MLflow UI', "INFO")
-        logger('  2. Use latent representations in downstream models (Stage 14+)', "INFO")
-        logger('  3. Each split has its own trained model and latent codes', "INFO")
+            results = run_production_training(
+                spark=spark,
+                db_name=DB_NAME,
+                collection_prefix=COLLECTION_PREFIX,
+                collection_suffix=COLLECTION_SUFFIX,
+                device=device,
+                best_config=best_config,
+                mlflow_experiment_name=MLFLOW_EXPERIMENT_NAME,
+                production_dir=PRODUCTION_DIR,
+                mongo_uri=MONGO_URI,
+                use_pymongo=True,
+                split_ids_filter=filtered_split_ids
+            )
+
+            # Summary
+            logger('', "INFO")
+            logger('=' * 100, "INFO")
+            logger('PRODUCTION TRAINING COMPLETE (TRAIN MODE)', "INFO")
+            logger('=' * 100, "INFO")
+            logger(f'Models trained: {results["num_splits"]}', "INFO")
+            logger(f'Total samples processed: {results["total_samples"]:,}', "INFO")
+            logger(f'Average validation loss: {results["avg_val_loss"]:.4f}', "INFO")
+            logger(f'Models saved to: {PRODUCTION_DIR}', "INFO")
+            logger(f'Latent collections: {COLLECTION_PREFIX}*_input (renamed)', "INFO")
+
+        else:  # TEST MODE
+            # TEST MODE: Train on full split, encode test_data
+            test_production_dir = ARTIFACT_BASE_DIR / "test"
+            test_production_dir.mkdir(parents=True, exist_ok=True)
+
+            logger('', "INFO")
+            logger('Starting test mode training...', "INFO")
+            logger(f'Training VQ-VAE on full split_{test_split} (train+val combined)', "INFO")
+            logger(f'Will encode test_data collection', "INFO")
+            logger('', "INFO")
+
+            # NOTE: Test mode requires modifications to run_production_training to:
+            # 1. Train on split with no role filter (train+val combined)
+            # 2. Save model as split_{test_split}_full_model.pth
+            # 3. Encode test_data collection instead of split collections
+            # This implementation provides the CLI structure; actual training logic
+            # needs to be implemented in src.vqvae_representation.run_production_training
+
+            results = run_production_training(
+                spark=spark,
+                db_name=DB_NAME,
+                collection_prefix=COLLECTION_PREFIX,
+                collection_suffix=COLLECTION_SUFFIX,
+                device=device,
+                best_config=best_config,
+                mlflow_experiment_name=f"{MLFLOW_EXPERIMENT_NAME}_Test",
+                production_dir=test_production_dir,
+                mongo_uri=MONGO_URI,
+                use_pymongo=True,
+                split_ids_filter=[test_split],  # Only train on test_split
+                test_mode=True,  # Flag to indicate test mode
+                test_collection='test_data'  # Encode test_data instead of split
+            )
+
+            # Summary
+            logger('', "INFO")
+            logger('=' * 100, "INFO")
+            logger('PRODUCTION TRAINING COMPLETE (TEST MODE)', "INFO")
+            logger('=' * 100, "INFO")
+            logger(f'Model trained on: split_{test_split} (full data)', "INFO")
+            logger(f'Model saved to: {test_production_dir}', "INFO")
+            logger(f'test_data collection encoded with codebook indices', "INFO")
         
     except Exception as e:
         logger(f'ERROR: {str(e)}', "ERROR")
@@ -323,28 +368,37 @@ def main(split_filter: str = None):
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='VQ-VAE Production Training (Stage 14)',
+        description='VQ-VAE Production Training (Stage 16)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Train all splits:
-  python scripts/14_vqvae_production.py
+  # Train mode - all splits:
+  python scripts/14_vqvae_production.py --mode train
 
-  # Train even splits only (0, 2, 4, ...):
-  python scripts/14_vqvae_production.py --splits even
+  # Train mode - even splits only:
+  python scripts/14_vqvae_production.py --mode train --splits even
 
-  # Train odd splits only (1, 3, 5, ...):
-  python scripts/14_vqvae_production.py --splits odd
-
-  # Train specific splits:
-  python scripts/14_vqvae_production.py --splits 0,1,5,10
+  # Test mode - train on full split_0, encode test_data:
+  python scripts/14_vqvae_production.py --mode test --test-split 0
         """
+    )
+    parser.add_argument(
+        '--mode',
+        choices=['train', 'test'],
+        default='train',
+        help='Pipeline mode: train (per-split models) or test (full split + test_data)'
+    )
+    parser.add_argument(
+        '--test-split',
+        type=int,
+        default=0,
+        help='Split ID to use for full training in test mode (default: 0)'
     )
     parser.add_argument(
         '--splits',
         type=str,
         default=None,
-        help='Filter splits: "even", "odd", or comma-separated list (e.g., "0,1,2")'
+        help='[TRAIN MODE ONLY] Filter splits: "even", "odd", or comma-separated list (e.g., "0,1,2")'
     )
     args = parser.parse_args()
 
@@ -355,7 +409,7 @@ Examples:
     start_time = time.time()
 
     try:
-        main(split_filter=args.splits)
+        main(mode=args.mode, test_split=args.test_split, split_filter=args.splits)
 
         total_time = time.time() - start_time
         hours = int(total_time // 3600)
@@ -364,7 +418,7 @@ Examples:
 
         logger('', "INFO")
         logger(f'Total execution time: {hours}h {minutes}m {seconds}s', "INFO")
-        logger('Stage 13 completed successfully', "INFO")
+        logger(f'Stage 16 completed successfully ({args.mode} mode)', "INFO")
 
     except Exception:
         sys.exit(1)
