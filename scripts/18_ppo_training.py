@@ -331,25 +331,28 @@ def run_episode(
         # Multi-step volatility = single-step volatility × sqrt(H)
         realized_vol = step1_vol * math.sqrt(model_config.horizon)
 
-        # Compute trading returns for different fee scenarios (excludes directional bonus)
-        # Taker fee (5 bps) - current implementation for agent training
-        trading_return = reward / realized_vol
-
-        # Maker fee scenarios for performance comparison (0 bps and -2.5 bps rebate)
+        # Compute trading returns for all fee scenarios (all exclude directional bonus)
+        # These are used for performance metrics (Sharpe ratio calculation)
         position_change = abs(position_curr - position_prev)
 
-        # Maker fee neutral (0 bps)
+        # 1. Baseline: Raw returns (no fees) - to assess pure predictive power
+        trading_return_raw = gross_pnl / realized_vol
+
+        # 2. Taker fee (5 bps) - market orders (agent training uses this)
+        trading_return_taker = reward / realized_vol  # reward already has taker fee
+
+        # 3. Maker fee neutral (0 bps) - limit orders without rebate
         tc_maker_neutral = 0.0 * position_change
         reward_maker_neutral = gross_pnl - tc_maker_neutral
         trading_return_maker_neutral = reward_maker_neutral / realized_vol
 
-        # Maker fee rebate (-2.5 bps)
+        # 4. Maker fee rebate (-2.5 bps) - limit orders with rebate
         tc_maker_rebate = -0.00025 * position_change
         reward_maker_rebate = gross_pnl - tc_maker_rebate
         trading_return_maker_rebate = reward_maker_rebate / realized_vol
 
-        # Add directional bonus to reward for learning signal
-        # Note: trading_return excludes bonus for accurate Sharpe calculation
+        # Add directional bonus to reward for learning signal (PPO optimization)
+        # Note: All trading_return_* exclude bonus for accurate performance metrics
         reward = (reward + directional_bonus) / realized_vol
 
         # Unrealized PnL for next timestep
@@ -364,12 +367,12 @@ def run_episode(
 
         # Update agent state with policy-based position
         # Track action_std instead of volatility (agent's learned uncertainty)
-        # Pass reward (learning signal) and all trading_returns (performance metrics for different fees)
+        # Pass reward (learning signal) and all 4 trading_returns (performance metrics for different fee scenarios)
         agent_state.update(
             position_curr, log_return, tc, reward, unrealized, gross_pnl, action_std_val,
-            trading_return, trading_return_maker_neutral, trading_return_maker_rebate
+            trading_return_raw, trading_return_taker, trading_return_maker_neutral, trading_return_maker_rebate
         )
-        episode_returns.append(trading_return)  # Use trading_return for Sharpe (excludes directional bonus)
+        episode_returns.append(trading_return_taker)  # Use taker for Sharpe (agent training scenario)
 
         # Check if episode should end
         done = (t >= valid_steps[-1])
@@ -442,9 +445,11 @@ def train_epoch(
         'n_ppo_updates': 0
     }
 
-    episode_returns = []  # Taker fee (5 bps)
-    episode_returns_maker_neutral = []  # Maker fee 0 bps
-    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps
+    # Episode returns for Sharpe ratio calculation (different fee scenarios)
+    episode_returns_raw = []  # Baseline: Raw returns (no fees)
+    episode_returns_taker = []  # Taker fee 5 bps (market orders)
+    episode_returns_maker_neutral = []  # Maker fee 0 bps (limit orders)
+    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps (limit orders)
 
     # Use ALL training episodes each epoch
     total_episodes = len(episodes)
@@ -472,7 +477,12 @@ def train_epoch(
         epoch_metrics['total_pnl'] += metrics['total_pnl']
         epoch_metrics['episode_count'] += 1
         epoch_metrics['avg_episode_length'] += metrics['episode_length']
-        episode_returns.append(metrics['total_trading_return'])  # Use trading_return for Sharpe (excludes directional bonus)
+
+        # Append trading returns for all fee scenarios (for Sharpe calculation)
+        episode_returns_raw.append(metrics['total_trading_return_raw'])
+        episode_returns_taker.append(metrics['total_trading_return_taker'])
+        episode_returns_maker_neutral.append(metrics['total_trading_return_maker_neutral'])
+        episode_returns_maker_rebate.append(metrics['total_trading_return_maker_rebate'])
 
         # Aggregate metrics by parent episode (day)
         parent_id = episode.parent_id if episode.parent_id is not None else ep_idx
@@ -577,11 +587,21 @@ def train_epoch(
         epoch_metrics['avg_reward'] = epoch_metrics['total_reward'] / epoch_metrics['episode_count']
         epoch_metrics['avg_pnl'] = epoch_metrics['total_pnl'] / epoch_metrics['episode_count']
         epoch_metrics['avg_episode_length'] /= epoch_metrics['episode_count']
-        epoch_metrics['sharpe'] = compute_sharpe_ratio(episode_returns)
+
+        # Compute Sharpe ratios for all fee scenarios
+        epoch_metrics['sharpe_raw'] = compute_sharpe_ratio(episode_returns_raw)  # Baseline: no fees
+        epoch_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 5 bps
+        epoch_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
+        epoch_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
+        epoch_metrics['sharpe'] = epoch_metrics['sharpe_taker']  # Legacy field (use taker)
     else:
         epoch_metrics['avg_reward'] = 0.0
         epoch_metrics['avg_pnl'] = 0.0
         epoch_metrics['avg_episode_length'] = 0.0
+        epoch_metrics['sharpe_raw'] = 0.0
+        epoch_metrics['sharpe_taker'] = 0.0
+        epoch_metrics['sharpe_maker_neutral'] = 0.0
+        epoch_metrics['sharpe_maker_rebate'] = 0.0
         epoch_metrics['sharpe'] = 0.0
 
     # Compute loss averages
@@ -702,7 +722,11 @@ def validate_epoch(
         'episode_count': 0
     }
 
-    episode_returns = []
+    # Episode returns for Sharpe ratio calculation (different fee scenarios)
+    episode_returns_raw = []  # Baseline: Raw returns (no fees)
+    episode_returns_taker = []  # Taker fee 5 bps (market orders)
+    episode_returns_maker_neutral = []  # Maker fee 0 bps (limit orders)
+    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps (limit orders)
     total_episodes = len(episodes)
 
     # Group episodes by parent_id for aggregated logging
@@ -727,7 +751,12 @@ def validate_epoch(
         val_metrics['total_reward'] += metrics['total_reward']
         val_metrics['total_pnl'] += metrics['total_pnl']
         val_metrics['episode_count'] += 1
-        episode_returns.append(metrics['total_trading_return'])  # Use trading_return for Sharpe (excludes directional bonus)
+
+        # Append trading returns for all fee scenarios (for Sharpe calculation)
+        episode_returns_raw.append(metrics['total_trading_return_raw'])
+        episode_returns_taker.append(metrics['total_trading_return_taker'])
+        episode_returns_maker_neutral.append(metrics['total_trading_return_maker_neutral'])
+        episode_returns_maker_rebate.append(metrics['total_trading_return_maker_rebate'])
 
         # Aggregate metrics by parent episode (day)
         parent_id = episode.parent_id if episode.parent_id is not None else ep_idx
@@ -805,10 +834,20 @@ def validate_epoch(
     if val_metrics['episode_count'] > 0:
         val_metrics['avg_reward'] = val_metrics['total_reward'] / val_metrics['episode_count']
         val_metrics['avg_pnl'] = val_metrics['total_pnl'] / val_metrics['episode_count']
-        val_metrics['sharpe'] = compute_sharpe_ratio(episode_returns)
+
+        # Compute Sharpe ratios for all fee scenarios
+        val_metrics['sharpe_raw'] = compute_sharpe_ratio(episode_returns_raw)  # Baseline: no fees
+        val_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 5 bps
+        val_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
+        val_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
+        val_metrics['sharpe'] = val_metrics['sharpe_taker']  # Legacy field (use taker)
     else:
         val_metrics['avg_reward'] = 0.0
         val_metrics['avg_pnl'] = 0.0
+        val_metrics['sharpe_raw'] = 0.0
+        val_metrics['sharpe_taker'] = 0.0
+        val_metrics['sharpe_maker_neutral'] = 0.0
+        val_metrics['sharpe_maker_rebate'] = 0.0
         val_metrics['sharpe'] = 0.0
 
     # Compute model metrics (losses, entropy, uncertainty, activity) on validation data
@@ -915,9 +954,13 @@ def train_split(
             config.ppo, config.reward, config.model, experiment_type, device
         )
 
-        logger(f'  Train - Sharpe: {train_metrics["sharpe"]:.4f}, '
-               f'Avg Reward: {train_metrics["avg_reward"]:.4f}, '
+        logger(f'  Train - Avg Reward: {train_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Raw (no fees):           {train_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):           {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):           {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps): {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
         logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
                f'Value: {train_metrics["avg_value_loss"]:.4f}, '
                f'Entropy: {train_metrics["avg_entropy"]:.4f}, '
@@ -929,9 +972,13 @@ def train_split(
             agent, val_episodes, config.reward, config.model, config.ppo, experiment_type, device
         )
 
-        logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
-               f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
+        logger(f'  Val - Avg Reward: {val_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Raw (no fees):           {val_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):           {val_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker (0 bps):           {val_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps): {val_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
         scheduler.step(val_metrics["sharpe"])
