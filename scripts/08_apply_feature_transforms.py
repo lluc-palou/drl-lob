@@ -1,15 +1,17 @@
 """
-Stage 8: Apply Feature Transformations
+Stage 09: Apply Feature Transformations
 
-Applies selected transformations to split data using per-split cyclic pattern:
-  split_X_input -> split_X_working -> SWAP -> split_X_output
+TRAIN MODE: Applies transformations to split_X_input collections using per-split fitted params
+TEST MODE: Applies transformations to test_data using fitted params from split_0
 
 Usage:
-    python scripts/08_apply_feature_transforms.py
+    TRAIN: python scripts/08_apply_feature_transforms.py --mode train
+    TEST:  python scripts/08_apply_feature_transforms.py --mode test --test-split 0
 """
 
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Setup paths
@@ -220,135 +222,294 @@ def apply_transformations_to_split(spark, split_id: int,
     logger(f"Successfully completed transformation for split {split_id}", "INFO")
 
 
+def apply_transformations_to_test_data(spark, test_split: int,
+                                        final_transforms: dict,
+                                        fitted_params: dict):
+    """
+    Apply transformations to test_data collection using fitted params from test_split.
+
+    Processing:
+    - Read from test_data collection
+    - Apply transformations using fitted params from specified split
+    - Write to test_data_transformed
+    - Swap test_data_transformed -> test_data
+
+    Args:
+        spark: SparkSession
+        test_split: Split ID to use for fitted parameters (typically 0)
+        final_transforms: Selected transformation types per feature
+        fitted_params: Fitted parameters from test_split
+    """
+    logger(f"=" * 80, "INFO")
+    logger(f"APPLYING TRANSFORMATIONS TO TEST_DATA", "INFO")
+    logger(f"Using fitted parameters from split_{test_split}", "INFO")
+    logger(f"=" * 80, "INFO")
+
+    input_coll = 'test_data'
+    output_coll = 'test_data_transformed'
+
+    logger(f"Reading from: {input_coll}", "INFO")
+    logger(f"Writing to: {output_coll}", "INFO")
+
+    # Load data from test_data collection
+    logger("Loading data from MongoDB...", "INFO")
+    df = (
+        spark.read.format("mongodb")
+        .option("database", DB_NAME)
+        .option("collection", input_coll)
+        .load()
+    )
+
+    original_count = df.count()
+    logger(f"Loaded {original_count:,} documents", "INFO")
+
+    # Identify features from data
+    logger("Identifying features from data...", "INFO")
+    feature_names_from_data = identify_feature_names(df)
+    logger(f"Found {len(feature_names_from_data)} features in data", "INFO")
+
+    # Filter transforms to only include available features
+    available_features = set(feature_names_from_data)
+    transforms_to_apply = {
+        feat: transform
+        for feat, transform in final_transforms.items()
+        if feat in available_features
+    }
+
+    logger(f"Will apply transformations to {len(transforms_to_apply)} features", "INFO")
+
+    # Apply transformations
+    logger("=" * 80, "INFO")
+    logger("APPLYING TRANSFORMATIONS", "INFO")
+    logger("=" * 80, "INFO")
+
+    apply_transformations_direct(
+        spark=spark,
+        db_name=DB_NAME,
+        input_collection=input_coll,
+        output_collection=output_coll,
+        feature_names=feature_names_from_data,
+        final_transforms=transforms_to_apply,
+        fitted_params=fitted_params
+    )
+
+    # Swap: test_data_transformed -> test_data
+    logger("", "INFO")
+    logger("Swapping transformed data to test_data...", "INFO")
+
+    from pymongo import MongoClient
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    db = client[DB_NAME]
+
+    # Drop original test_data
+    db[input_coll].drop()
+    logger(f"  Dropped {input_coll}", "INFO")
+
+    # Rename output to test_data
+    db[output_coll].rename(input_coll)
+    logger(f"  Renamed {output_coll} → {input_coll}", "INFO")
+
+    client.close()
+
+    logger(f"Successfully completed transformation for test_data", "INFO")
+
+
 # =================================================================================================
 # Main Execution
 # =================================================================================================
 
 def main():
     """Main execution function."""
-    logger('=' * 80, "INFO")
-    logger('STAGE 8: APPLY FEATURE TRANSFORMATIONS', "INFO")
-    logger('=' * 80, "INFO")
-    
-    # Create per-split cyclic manager
-    manager = PerSplitCyclicManager(MONGO_URI, DB_NAME)
-    
-    try:
-        # Discover splits
-        split_ids = manager.get_split_ids()
-        
-        if not split_ids:
-            logger("No split_X_input collections found!", "ERROR")
-            return 1
-        
-        logger(f"Found {len(split_ids)} splits: {split_ids}", "INFO")
-        
-        # Apply max splits limit
-        if MAX_SPLITS is not None:
-            split_ids = split_ids[:MAX_SPLITS]
-            logger(f"Processing first {MAX_SPLITS} splits", "INFO")
-        
-        # Show initial state
-        logger("", "INFO")
-        manager.print_all_splits_state()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Apply feature transformations')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                        help='Pipeline mode: train (transform splits) or test (transform test_data)')
+    parser.add_argument('--test-split', type=int, default=0,
+                        help='Split ID to use for fitted params in test mode (default: 0)')
+    args = parser.parse_args()
 
-        # CRITICAL: Create timestamp indexes on all split collections for efficient hourly queries
-        # Without these indexes, each hourly query performs a full collection scan O(N)
-        # With indexes: O(log N + matches) - reduces processing time dramatically
+    mode = args.mode
+    test_split = args.test_split
+
+    logger('=' * 80, "INFO")
+    logger(f'STAGE 09: APPLY FEATURE TRANSFORMATIONS - {mode.upper()} MODE', "INFO")
+    logger('=' * 80, "INFO")
+    
+    if mode == 'train':
+        # TRAIN MODE: Process all splits
+        manager = PerSplitCyclicManager(MONGO_URI, DB_NAME)
+
+        try:
+            # Discover splits
+            split_ids = manager.get_split_ids()
+
+            if not split_ids:
+                logger("No split_X_input collections found!", "ERROR")
+                return 1
+
+            logger(f"Found {len(split_ids)} splits: {split_ids}", "INFO")
+
+            # Apply max splits limit
+            if MAX_SPLITS is not None:
+                split_ids = split_ids[:MAX_SPLITS]
+                logger(f"Processing first {MAX_SPLITS} splits", "INFO")
+
+            # Show initial state
+            logger("", "INFO")
+            manager.print_all_splits_state()
+
+            # Create timestamp indexes
+            logger("", "INFO")
+            logger("Creating timestamp indexes on all split collections...", "INFO")
+            from pymongo import MongoClient, ASCENDING
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            db = client[DB_NAME]
+
+            for split_id in split_ids:
+                input_collection = INPUT_COLLECTION_TEMPLATE.format(split_id)
+                input_coll = db[input_collection]
+
+                existing_indexes = list(input_coll.list_indexes())
+                has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
+
+                if not has_timestamp_index:
+                    logger(f'  Creating index on {input_collection}...', "INFO")
+                    input_coll.create_index([("timestamp", ASCENDING)], background=False)
+                else:
+                    logger(f'  Index already exists on {input_collection}', "INFO")
+
+            client.close()
+            logger('Timestamp indexes created/verified on all split collections', "INFO")
+            logger('', "INFO")
+
+            # Load transformation selections
+            final_transforms = load_final_transforms()
+
+            # Create Spark session
+            logger("", "INFO")
+            logger("Initializing Spark...", "INFO")
+            spark = create_spark_session(
+                app_name="ApplyFeatureTransforms",
+                db_name=DB_NAME,
+                mongo_uri=MONGO_URI
+            )
+
+            try:
+                # Process each split
+                for split_id in split_ids:
+                    logger("", "INFO")
+                    logger("=" * 80, "INFO")
+                    logger(f"PROCESSING SPLIT {split_id}", "INFO")
+                    logger("=" * 80, "INFO")
+
+                    # Validate input exists
+                    if not manager.validate_split_input_exists(split_id):
+                        logger(f"Skipping split {split_id} (invalid input)", "ERROR")
+                        continue
+
+                    # Prepare for processing (clear output collection)
+                    manager.prepare_split_for_processing(split_id, force=FORCE_OVERWRITE)
+
+                    # Load fitted parameters for this split
+                    fitted_params = load_split_fitted_params(split_id)
+
+                    # Apply transformations: split_X_input -> split_X_output
+                    apply_transformations_to_split(
+                        spark,
+                        split_id,
+                        final_transforms,
+                        fitted_params
+                    )
+
+                    # Swap: split_X_output -> split_X_input
+                    logger("", "INFO")
+                    manager.swap_split_to_input(split_id)
+
+                    logger(f"Split {split_id} complete!", "INFO")
+
+                # Show final state
+                logger("", "INFO")
+                logger("=" * 80, "INFO")
+                logger("FINAL STATE", "INFO")
+                logger("=" * 80, "INFO")
+                manager.print_all_splits_state()
+
+                logger("", "INFO")
+                logger("=" * 80, "INFO")
+                logger("STAGE 09 COMPLETE (TRAIN MODE)", "INFO")
+                logger("=" * 80, "INFO")
+                logger(f"Transformed {len(split_ids)} splits", "INFO")
+                logger(f"Transformed data is now in split_X_input collections", "INFO")
+
+                return 0
+
+            finally:
+                if not is_orchestrated:
+                    spark.stop()
+                    logger('Spark session stopped', "INFO")
+
+        finally:
+            manager.close()
+
+    else:  # TEST MODE
+        # TEST MODE: Apply transformations to test_data using fitted params from test_split
+        logger(f"Using fitted parameters from split_{test_split}", "INFO")
         logger("", "INFO")
-        logger("Creating timestamp indexes on all split collections...", "INFO")
+
+        # Create timestamp index on test_data
+        logger("Creating timestamp index on test_data collection...", "INFO")
         from pymongo import MongoClient, ASCENDING
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         db = client[DB_NAME]
 
-        for split_id in split_ids:
-            input_collection = INPUT_COLLECTION_TEMPLATE.format(split_id)
-            input_coll = db[input_collection]
+        test_coll = db['test_data']
+        existing_indexes = list(test_coll.list_indexes())
+        has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
 
-            # Check if index already exists
-            existing_indexes = list(input_coll.list_indexes())
-            has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
-
-            if not has_timestamp_index:
-                logger(f'  Creating index on {input_collection}...', "INFO")
-                input_coll.create_index([("timestamp", ASCENDING)], background=False)
-            else:
-                logger(f'  Index already exists on {input_collection}', "INFO")
+        if not has_timestamp_index:
+            logger('  Creating index on test_data...', "INFO")
+            test_coll.create_index([("timestamp", ASCENDING)], background=False)
+        else:
+            logger('  Index already exists on test_data', "INFO")
 
         client.close()
-        logger('Timestamp indexes created/verified on all split collections', "INFO")
+        logger('Timestamp index created/verified', "INFO")
         logger('', "INFO")
 
-        # Load transformation selections
+        # Load transformation selections and fitted params
         final_transforms = load_final_transforms()
-        
-        # Create Spark session (uses default 8GB driver memory and jar path)
-        logger("", "INFO")
+        fitted_params = load_split_fitted_params(test_split)
+
+        # Create Spark session
         logger("Initializing Spark...", "INFO")
         spark = create_spark_session(
-            app_name="ApplyFeatureTransforms",
+            app_name="ApplyFeatureTransforms_Test",
             db_name=DB_NAME,
             mongo_uri=MONGO_URI
         )
-        
+
         try:
-            # Process each split
-            for split_id in split_ids:
-                logger("", "INFO")
-                logger("=" * 80, "INFO")
-                logger(f"PROCESSING SPLIT {split_id}", "INFO")
-                logger("=" * 80, "INFO")
-                
-                # Validate input exists
-                if not manager.validate_split_input_exists(split_id):
-                    logger(f"Skipping split {split_id} (invalid input)", "ERROR")
-                    continue
-                
-                # Prepare for processing (clear output collection)
-                manager.prepare_split_for_processing(split_id, force=FORCE_OVERWRITE)
-                
-                # Load fitted parameters for this split
-                fitted_params = load_split_fitted_params(split_id)
-                
-                # Apply transformations: split_X_input -> split_X_output
-                apply_transformations_to_split(
-                    spark, 
-                    split_id, 
-                    final_transforms, 
-                    fitted_params
-                )
-                
-                # Swap: split_X_output -> split_X_input (transformed data becomes new input)
-                logger("", "INFO")
-                manager.swap_split_to_input(split_id)
-                
-                logger(f"Split {split_id} complete!", "INFO")
-            
-            # Show final state
+            # Apply transformations to test_data
+            apply_transformations_to_test_data(
+                spark,
+                test_split,
+                final_transforms,
+                fitted_params
+            )
+
             logger("", "INFO")
             logger("=" * 80, "INFO")
-            logger("FINAL STATE", "INFO")
+            logger("STAGE 09 COMPLETE (TEST MODE)", "INFO")
             logger("=" * 80, "INFO")
-            manager.print_all_splits_state()
-            
-            logger("", "INFO")
-            logger("=" * 80, "INFO")
-            logger("STAGE 8 COMPLETE", "INFO")
-            logger("=" * 80, "INFO")
-            logger(f"Transformed {len(split_ids)} splits", "INFO")
-            logger(f"Transformed data is now in split_X_input collections", "INFO")
-            logger(f"Original data has been replaced with transformed data", "INFO")
-            
+            logger("Transformed test_data using fitted params from split_0", "INFO")
+            logger("Transformed data is now in test_data collection", "INFO")
+
             return 0
-            
+
         finally:
-            # Only stop Spark if not orchestrated
             if not is_orchestrated:
                 spark.stop()
                 logger('Spark session stopped', "INFO")
-    
-    finally:
-        manager.close()
 
 
 if __name__ == "__main__":
