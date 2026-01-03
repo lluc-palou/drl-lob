@@ -186,19 +186,38 @@ def main(mode='train', test_split=0):
 
             # Load selected half-lives from train mode artifacts
             aggregation_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_halflife_selection' / 'aggregation'
-            halflifes_path = aggregation_dir / 'final_halflifes.json'
 
-            if not halflifes_path.exists():
+            # Try CSV first (preferred format), fallback to JSON for backward compatibility
+            csv_path = aggregation_dir / 'final_halflifes.csv'
+            json_path = aggregation_dir / 'final_halflifes.json'
+
+            if csv_path.exists():
+                logger(f'Loading half-lives from CSV: {csv_path}', "INFO")
+                import pandas as pd
+                df = pd.read_csv(csv_path)
+
+                # Auto-detect column names (handle different formats)
+                if 'feature' in df.columns and 'half_life' in df.columns:
+                    final_half_lives = dict(zip(df['feature'], df['half_life']))
+                elif 'feature_name' in df.columns and 'selected_half_life' in df.columns:
+                    final_half_lives = dict(zip(df['feature_name'], df['selected_half_life']))
+                else:
+                    # Assume first column is feature name, second is half-life value
+                    final_half_lives = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+
+            elif json_path.exists():
+                logger(f'Loading half-lives from JSON: {json_path}', "INFO")
+                with open(json_path, 'r') as f:
+                    final_half_lives = json.load(f)
+            else:
                 raise FileNotFoundError(
-                    f"Train mode half-lives not found at {halflifes_path}\n"
+                    f"Train mode half-lives not found. Looked for:\n"
+                    f"  CSV: {csv_path}\n"
+                    f"  JSON: {json_path}\n"
                     f"Please run Stage 10 in train mode first: python scripts/10_feature_scale.py --mode train"
                 )
 
-            with open(halflifes_path, 'r') as f:
-                final_half_lives = json.load(f)
-
             logger(f'Loaded {len(final_half_lives)} selected half-lives from train mode', "INFO")
-            logger(f'From: {halflifes_path}', "INFO")
             logger('', "INFO")
 
             # Filter to only standardizable features
