@@ -212,6 +212,11 @@ def main(mode='train', test_split=0):
             logger(f'TEST MODE: Processing only split_{test_split}', "INFO")
             logger(f'Processing {len(feature_names)} transformable features', "INFO")
             logger('', "INFO")
+            logger('=' * 80, "INFO")
+            logger('STARTING TRANSFORMATION FITTING - This may take several minutes', "INFO")
+            logger('The processor will fit transformations on training data hour-by-hour', "INFO")
+            logger('=' * 80, "INFO")
+            logger('', "INFO")
 
             # Initialize processor
             processor = FeatureTransformProcessor(
@@ -223,6 +228,13 @@ def main(mode='train', test_split=0):
             )
 
             # Process test split
+            logger(f'Calling processor.process_split() for split_{test_split}...', "INFO")
+            logger('This will:', "INFO")
+            logger('  1. Discover all hours in the split', "INFO")
+            logger('  2. Pass 1: Fit transformations on training data (may take time)', "INFO")
+            logger('  3. Pass 2: Evaluate on validation data', "INFO")
+            logger('', "INFO")
+
             split_results = processor.process_split(
                 split_id=test_split,
                 feature_names=feature_names,
