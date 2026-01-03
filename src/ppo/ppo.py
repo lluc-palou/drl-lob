@@ -98,11 +98,9 @@ def ppo_update(
     advantages_std = advantages.std()
     advantages = (advantages - advantages_mean) / (advantages_std + 1e-8)
 
-    # Normalize returns for value loss (stabilizes learning with non-stationary reward scale)
-    # CRITICAL FIX: Value function struggles with raw returns when reward scale changes
+    # Store raw return statistics for diagnostics
     returns_mean = returns.mean()
     returns_std = returns.std()
-    returns_normalized = (returns - returns_mean) / (returns_std + 1e-8)
     
     # PPO epochs
     total_policy_loss = 0
@@ -128,7 +126,7 @@ def ppo_update(
             mb_actions = actions[start:end]
             mb_old_log_probs = old_log_probs[start:end]
             mb_advantages = advantages[start:end]
-            mb_returns = returns_normalized[start:end]  # Use normalized returns
+            mb_returns = returns[start:end]  # Use raw returns (user preference)
 
             # Forward pass - call evaluate_actions with correct arguments based on experiment
             from src.ppo.config import ExperimentType
@@ -163,7 +161,7 @@ def ppo_update(
             approx_kl = ((ratio - 1.0) - torch.log(ratio)).mean().item()
 
             # Value loss (MSE)
-            # FIXED: Now uses NORMALIZED returns for stable learning with non-stationary reward scale
+            # Uses raw (unnormalized) returns - value function learns actual reward scale
             value_loss = F.mse_loss(new_values, mb_returns)
 
             # Fixed entropy bonus (encourages exploration)
