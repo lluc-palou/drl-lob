@@ -116,6 +116,7 @@ def ppo_update(
     total_entropy = 0
     total_uncertainty = 0
     total_activity = 0
+    total_turnover = 0       # Track position changes (turnover)
     total_clip_fraction = 0  # Track how often clipping activates
     total_approx_kl = 0      # Track KL divergence
     n_updates = 0
@@ -179,19 +180,21 @@ def ppo_update(
             # Uncertainty penalty (prevents std exploitation)
             uncertainty_penalty = config.uncertainty_coef * std.mean()
 
-            # Inactivity penalty (prevents no-trade collapse)
-            # Penalizes low |actions| (close to zero positions)
-            # When |actions| → 0: inactivity → 1 (high penalty)
-            # When |actions| → 1: inactivity → 0 (no penalty)
-            inactivity = (1.0 - torch.abs(mb_actions)).mean()
-            inactivity_penalty = config.activity_coef * inactivity
+            # Turnover penalty (penalizes frequent position changes to encourage selective trading)
+            # Compute position changes: |action[t] - action[t-1]|
+            # Higher penalty → fewer trades → higher quality trades
+            if mb_actions.shape[0] > 1:
+                turnover = torch.abs(mb_actions[1:] - mb_actions[:-1]).mean()
+            else:
+                turnover = torch.tensor(0.0, device=mb_actions.device)
+            turnover_penalty = config.turnover_coef * turnover
 
-            # Total loss (policy + value - entropy + inactivity + uncertainty)
+            # Total loss (policy + value - entropy + turnover + uncertainty)
             # Subtract bonuses, add penalties
             loss = (policy_loss +
                    config.value_coef * value_loss -
                    entropy_bonus +
-                   inactivity_penalty +
+                   turnover_penalty +
                    uncertainty_penalty)
 
             # Optimization step
@@ -206,6 +209,7 @@ def ppo_update(
             total_entropy += entropy.mean().item()
             total_uncertainty += std.mean().item()
             total_activity += torch.abs(mb_actions).mean().item()  # Still track activity for interpretability
+            total_turnover += turnover.item()  # Track turnover (position changes)
             total_clip_fraction += clip_fraction
             total_approx_kl += approx_kl
             n_updates += 1
@@ -216,6 +220,7 @@ def ppo_update(
         'entropy': total_entropy / n_updates,
         'uncertainty': total_uncertainty / n_updates,
         'activity': total_activity / n_updates,  # Average |actions|
+        'turnover': total_turnover / n_updates,  # Average position changes
         'clip_fraction': total_clip_fraction / n_updates,  # How often clipping occurs
         'approx_kl': total_approx_kl / n_updates,  # Approximate KL divergence
         'advantages_mean': advantages_mean.item(),  # Raw advantage statistics

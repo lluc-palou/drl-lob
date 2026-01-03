@@ -178,9 +178,11 @@ class EWMAStandardizationApplicator:
             if not transformed_rows:
                 logger(f'  Hour {hour_idx + 1}/{len(all_hours)}: No data to write', "WARNING")
                 continue
-            
-            # Convert back to DataFrame
-            transformed_df = self.spark.createDataFrame(transformed_rows, schema=hour_df.schema)
+
+            # Convert back to DataFrame using pandas intermediate (avoids Spark temp file issues on Windows)
+            import pandas as pd
+            pandas_df = pd.DataFrame(transformed_rows)
+            transformed_df = self.spark.createDataFrame(pandas_df, schema=hour_df.schema)
             
             # Drop _id if present
             if '_id' in transformed_df.columns:
@@ -336,8 +338,10 @@ class EWMAStandardizationApplicator:
                 logger(f'  Hour {hour_idx + 1}/{len(all_hours)}: No data to write', "WARNING")
                 continue
 
-            # Convert back to DataFrame
-            transformed_df = self.spark.createDataFrame(transformed_rows, schema=hour_df.schema)
+            # Convert back to DataFrame using pandas intermediate (avoids Spark temp file issues on Windows)
+            import pandas as pd
+            pandas_df = pd.DataFrame(transformed_rows)
+            transformed_df = self.spark.createDataFrame(pandas_df, schema=hour_df.schema)
 
             # Drop _id if present
             if '_id' in transformed_df.columns:

@@ -87,8 +87,8 @@ class PPOConfig:
     clip_ratio: float = 0.2              # PPO clipping parameter (increased from 0.1 for better policy updates)
     value_coef: float = 0.25             # Value loss coefficient (REDUCED from 0.5 to prevent value dominance)
     entropy_coef: float = 0.1            # Entropy coefficient (INCREASED 10x from 0.01 to prevent collapse)
-    uncertainty_coef: float = 0.03       # Uncertainty penalty coefficient (mild penalty to prevent extreme std)
-    activity_coef: float = 0.005         # Inactivity penalty coefficient (INCREASED 10x from 0.0005 to prevent activity collapse)
+    uncertainty_coef: float = 0.08       # Uncertainty penalty coefficient (INCREASED to require higher confidence)
+    turnover_coef: float = 0.05          # Turnover penalty coefficient (penalizes position changes to reduce trade frequency)
     max_grad_norm: float = 0.5           # Gradient clipping norm
     n_epochs: int = 4                    # PPO epochs per update (INCREASED from 1 - critical for learning)
     batch_size: int = 512                # Minibatch size (reduced for multiple gradient updates per epoch)
