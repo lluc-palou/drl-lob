@@ -101,7 +101,15 @@ def ppo_update(
     # Store raw return statistics for diagnostics
     returns_mean = returns.mean()
     returns_std = returns.std()
-    
+
+    # Normalize returns for value learning (stabilizes training)
+    # Policy still uses normalized advantages (computed from raw returns via GAE)
+    # This prevents value loss divergence while keeping policy incentives unchanged
+    if returns_std > 1e-8:
+        returns_normalized = (returns - returns_mean) / (returns_std + 1e-8)
+    else:
+        returns_normalized = returns - returns_mean
+
     # PPO epochs
     total_policy_loss = 0
     total_value_loss = 0
@@ -126,7 +134,7 @@ def ppo_update(
             mb_actions = actions[start:end]
             mb_old_log_probs = old_log_probs[start:end]
             mb_advantages = advantages[start:end]
-            mb_returns = returns[start:end]  # Use raw returns (user preference)
+            mb_returns_normalized = returns_normalized[start:end]  # Normalized for value learning
 
             # Forward pass - call evaluate_actions with correct arguments based on experiment
             from src.ppo.config import ExperimentType
@@ -160,9 +168,10 @@ def ppo_update(
             # Diagnostic: Approximate KL divergence (for early stopping)
             approx_kl = ((ratio - 1.0) - torch.log(ratio)).mean().item()
 
-            # Value loss (MSE)
-            # Uses raw (unnormalized) returns - value function learns actual reward scale
-            value_loss = F.mse_loss(new_values, mb_returns)
+            # Value loss (MSE on normalized returns)
+            # Normalization prevents divergence from unbounded raw returns
+            # Policy gradient is unchanged (uses normalized advantages from raw returns via GAE)
+            value_loss = F.mse_loss(new_values, mb_returns_normalized)
 
             # Fixed entropy bonus (encourages exploration)
             entropy_bonus = config.entropy_coef * entropy.mean()
