@@ -450,6 +450,7 @@ def train_epoch(
         'total_entropy': 0.0,
         'total_uncertainty': 0.0,
         'total_activity': 0.0,
+        'total_turnover': 0.0,
         'n_ppo_updates': 0
     }
 
@@ -573,6 +574,7 @@ def train_epoch(
             epoch_metrics['total_entropy'] += loss_metrics['entropy']
             epoch_metrics['total_uncertainty'] += loss_metrics['uncertainty']
             epoch_metrics['total_activity'] += loss_metrics['activity']
+            epoch_metrics['total_turnover'] += loss_metrics['turnover']
             epoch_metrics['n_ppo_updates'] += 1
             trajectory_buffer.clear()
 
@@ -618,12 +620,14 @@ def train_epoch(
         epoch_metrics['avg_entropy'] = epoch_metrics['total_entropy'] / epoch_metrics['n_ppo_updates']
         epoch_metrics['avg_uncertainty'] = epoch_metrics['total_uncertainty'] / epoch_metrics['n_ppo_updates']
         epoch_metrics['avg_activity'] = epoch_metrics['total_activity'] / epoch_metrics['n_ppo_updates']
+        epoch_metrics['avg_turnover'] = epoch_metrics['total_turnover'] / epoch_metrics['n_ppo_updates']
     else:
         epoch_metrics['avg_policy_loss'] = 0.0
         epoch_metrics['avg_value_loss'] = 0.0
         epoch_metrics['avg_entropy'] = 0.0
         epoch_metrics['avg_uncertainty'] = 0.0
         epoch_metrics['avg_activity'] = 0.0
+        epoch_metrics['avg_turnover'] = 0.0
 
     return epoch_metrics
 
@@ -929,16 +933,14 @@ def train_split(
     results_csv_path = LOG_DIR / f"split_{split_id}_epoch_results.csv"
     csv_header = [
         'epoch',
-        # Training metrics - all Sharpe scenarios
+        # Training metrics - all Sharpe scenarios (ONLY taker is optimized)
         'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
         'train_avg_reward', 'train_avg_pnl',
         'train_policy_loss', 'train_value_loss', 'train_entropy',
-        'train_uncertainty', 'train_activity',
-        # Validation metrics - all Sharpe scenarios
+        'train_uncertainty', 'train_activity', 'train_turnover',
+        # Validation metrics - Sharpe scenarios only (no loss/entropy metrics)
         'val_sharpe_buyhold', 'val_sharpe_taker', 'val_sharpe_maker_neutral', 'val_sharpe_maker_rebate',
-        'val_avg_reward', 'val_avg_pnl',
-        'val_policy_loss', 'val_value_loss', 'val_entropy',
-        'val_uncertainty', 'val_activity',
+        'val_avg_reward', 'val_avg_pnl', 'val_activity',
         'learning_rate'
     ]
 
@@ -1021,7 +1023,7 @@ def train_split(
             writer = csv.writer(f)
             writer.writerow([
                 epoch + 1,  # Epoch number (1-indexed)
-                # Training - all Sharpe scenarios
+                # Training - all Sharpe scenarios (ONLY taker is optimized)
                 train_metrics["sharpe_raw"],
                 train_metrics["sharpe_taker"],
                 train_metrics["sharpe_maker_neutral"],
@@ -1033,17 +1035,14 @@ def train_split(
                 train_metrics["avg_entropy"],
                 train_metrics["avg_uncertainty"],
                 train_metrics["avg_activity"],
-                # Validation - all Sharpe scenarios
+                train_metrics["avg_turnover"],
+                # Validation - Sharpe scenarios only
                 val_metrics["sharpe_raw"],
                 val_metrics["sharpe_taker"],
                 val_metrics["sharpe_maker_neutral"],
                 val_metrics["sharpe_maker_rebate"],
                 val_metrics["avg_reward"],
                 val_metrics["avg_pnl"],
-                val_metrics["policy_loss"],
-                val_metrics["value_loss"],
-                val_metrics["entropy"],
-                val_metrics["uncertainty"],
                 val_metrics["activity"],
                 current_lr
             ])
@@ -1148,16 +1147,14 @@ def train_test_mode(
     results_csv_path = LOG_DIR / f"test_split_{test_split}_epoch_results.csv"
     csv_header = [
         'epoch',
-        # Training metrics (full split)
+        # Training metrics (full split) - ONLY taker is optimized
         'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
         'train_avg_reward', 'train_avg_pnl',
         'train_policy_loss', 'train_value_loss', 'train_entropy',
-        'train_uncertainty', 'train_activity',
-        # Test metrics (test_data)
+        'train_uncertainty', 'train_activity', 'train_turnover',
+        # Test metrics (test_data) - Sharpe scenarios only
         'test_sharpe_buyhold', 'test_sharpe_taker', 'test_sharpe_maker_neutral', 'test_sharpe_maker_rebate',
-        'test_avg_reward', 'test_avg_pnl',
-        'test_policy_loss', 'test_value_loss', 'test_entropy',
-        'test_uncertainty', 'test_activity',
+        'test_avg_reward', 'test_avg_pnl', 'test_activity',
         'learning_rate'
     ]
 
@@ -1249,19 +1246,17 @@ def train_test_mode(
             writer = csv.writer(f)
             writer.writerow([
                 epoch + 1,
-                # Training metrics
+                # Training metrics (ONLY taker is optimized)
                 train_metrics["sharpe_raw"], train_metrics["sharpe_taker"],
                 train_metrics["sharpe_maker_neutral"], train_metrics["sharpe_maker_rebate"],
                 train_metrics["avg_reward"], train_metrics["avg_pnl"],
                 train_metrics["avg_policy_loss"], train_metrics["avg_value_loss"],
                 train_metrics["avg_entropy"], train_metrics["avg_uncertainty"],
-                train_metrics["avg_activity"],
-                # Test metrics
+                train_metrics["avg_activity"], train_metrics["avg_turnover"],
+                # Test metrics - Sharpe scenarios only
                 test_metrics["sharpe_raw"], test_metrics["sharpe_taker"],
                 test_metrics["sharpe_maker_neutral"], test_metrics["sharpe_maker_rebate"],
                 test_metrics["avg_reward"], test_metrics["avg_pnl"],
-                test_metrics["policy_loss"], test_metrics["value_loss"],
-                test_metrics["entropy"], test_metrics["uncertainty"],
                 test_metrics["activity"],
                 current_lr
             ])
