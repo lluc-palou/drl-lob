@@ -411,43 +411,56 @@ def main():
             logger('', "INFO")
 
             # ==============================================================================
-            # STEP 1: FIT SCALERS on split_0 (train+val combined) and SAVE
+            # STEP 1: FIT SCALERS on split_0 (if not already fitted) and SAVE
             # ==============================================================================
-            logger('=' * 80, "INFO")
-            logger(f'STEP 1: Fitting scalers on split_{test_split} (train+val)', "INFO")
-            logger('=' * 80, "INFO")
-            logger(f'Input: split_{test_split}_input', "INFO")
-            logger(f'Output: split_{test_split}_output', "INFO")
-            logger('Scalers will be fitted on role=train data incrementally', "INFO")
-            logger('', "INFO")
 
-            # Initialize applicator for fitting
-            applicator_fit = EWMAStandardizationApplicator(
-                spark=spark,
-                db_name=DB_NAME,
-                final_halflifes=final_halflifes,
-                clip_std=CLIP_STD
-            )
+            # Check if scaler states already exist
+            scaler_states_exist = TEST_MODE_SCALER_STATES.exists()
 
-            # Process split to fit scalers
-            applicator_fit.apply_to_split(
-                split_id=test_split,
-                feature_names=all_feature_names,
-                input_collection_prefix="split_",
-                input_collection_suffix="_input",
-                output_collection_prefix="split_",
-                output_collection_suffix="_output"
-            )
+            if scaler_states_exist:
+                logger('=' * 80, "INFO")
+                logger('SCALER STATES ALREADY EXIST', "INFO")
+                logger('=' * 80, "INFO")
+                logger(f'Found: {TEST_MODE_SCALER_STATES}', "INFO")
+                logger('Skipping fitting phase - will use existing fitted parameters', "INFO")
+                logger('(To refit, delete the file and re-run)', "INFO")
+                logger('', "INFO")
+            else:
+                logger('=' * 80, "INFO")
+                logger(f'STEP 1: Fitting scalers on split_{test_split} (train+val)', "INFO")
+                logger('=' * 80, "INFO")
+                logger(f'Input: split_{test_split}_input', "INFO")
+                logger(f'Output: split_{test_split}_output', "INFO")
+                logger('Scalers will be fitted on role=train data incrementally', "INFO")
+                logger('', "INFO")
 
-            logger('', "INFO")
-            logger(f'✓ Fitted scalers on split_{test_split} training data', "INFO")
-            logger(f'✓ Created split_{test_split}_output', "INFO")
+                # Initialize applicator for fitting
+                applicator_fit = EWMAStandardizationApplicator(
+                    spark=spark,
+                    db_name=DB_NAME,
+                    final_halflifes=final_halflifes,
+                    clip_std=CLIP_STD
+                )
 
-            # Save scaler states to file
-            logger('', "INFO")
-            logger('Saving fitted scaler states...', "INFO")
-            save_scaler_states(applicator_fit, TEST_MODE_SCALER_STATES)
-            logger('', "INFO")
+                # Process split to fit scalers
+                applicator_fit.apply_to_split(
+                    split_id=test_split,
+                    feature_names=all_feature_names,
+                    input_collection_prefix="split_",
+                    input_collection_suffix="_input",
+                    output_collection_prefix="split_",
+                    output_collection_suffix="_output"
+                )
+
+                logger('', "INFO")
+                logger(f'✓ Fitted scalers on split_{test_split} training data', "INFO")
+                logger(f'✓ Created split_{test_split}_output', "INFO")
+
+                # Save scaler states to file
+                logger('', "INFO")
+                logger('Saving fitted scaler states...', "INFO")
+                save_scaler_states(applicator_fit, TEST_MODE_SCALER_STATES)
+                logger('', "INFO")
 
             # ==============================================================================
             # STEP 2: LOAD FITTED SCALERS and APPLY to test_data
