@@ -308,11 +308,11 @@ def run_episode(
         position_prev = agent_state.current_position
 
         # Compute reward using simple PnL-based formula
-        # TRAINING SCENARIO: Taker fees (5 bps transaction cost)
+        # TRAINING SCENARIO: Taker fees (10 bps transaction cost)
         # Agent learns under harder conditions - forces better position sizing and directional edge
-        # Training with taker fees helps learn generalizable skills that transfer to all scenarios
+        # Higher fees encourage more selective, higher-quality trades over frequent trading
         reward, gross_pnl, tc = compute_simple_reward(
-            position_prev, position_curr, target, taker_fee=0.0005  # 5 bps taker fee
+            position_prev, position_curr, target, taker_fee=0.001  # 10 bps taker fee
         )
 
         # Compute directional accuracy bonus (for reward shaping, not logged PnL)
@@ -524,7 +524,7 @@ def train_epoch(
             trade_frequency = dm['total_trades'] / dm['total_steps']
 
             # Compute TC for all fee scenarios from position change
-            taker_fee = 0.0005  # 5 bps
+            taker_fee = 0.001  # 10 bps
             maker_fee_neutral = 0.0  # 0 bps
             maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
 
@@ -545,7 +545,7 @@ def train_epoch(
             logger(f'    │  Position Sizing: Mean={avg_position:.3f}, Max={dm["max_pos"]:.3f}', "INFO")
             logger(f'    │  Action Uncertainty (σ): Mean={avg_uncertainty:.3f}, Range=[{dm["min_std"]:.3f}, {dm["max_std"]:.3f}]', "INFO")
             logger(f'    │', "INFO")
-            logger(f'    │  Performance (Market Orders - Taker Fee 5 bps):', "INFO")
+            logger(f'    │  Performance (Market Orders - Taker Fee 10 bps):', "INFO")
             logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
             logger(f'    │    TC/Trade:        {avg_tc_taker:.8f}', "INFO")
             logger(f'    │    Net PnL/Trade:   {net_pnl_taker:.8f} ({"PROFIT" if net_pnl_taker > 0 else "LOSS"})', "INFO")
@@ -797,7 +797,7 @@ def validate_epoch(
             trade_frequency = dm['total_trades'] / dm['total_steps']
 
             # Compute TC for all fee scenarios from position change
-            taker_fee = 0.0005  # 5 bps
+            taker_fee = 0.001  # 10 bps
             maker_fee_neutral = 0.0  # 0 bps
             maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
 
@@ -818,7 +818,7 @@ def validate_epoch(
             logger(f'    │  Position Sizing: Mean={avg_position:.3f}, Max={dm["max_pos"]:.3f}', "INFO")
             logger(f'    │  Action Uncertainty (σ): Mean={avg_uncertainty:.3f}, Range=[{dm["min_std"]:.3f}, {dm["max_std"]:.3f}]', "INFO")
             logger(f'    │', "INFO")
-            logger(f'    │  Performance (Market Orders - Taker Fee 5 bps):', "INFO")
+            logger(f'    │  Performance (Market Orders - Taker Fee 10 bps):', "INFO")
             logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
             logger(f'    │    TC/Trade:        {avg_tc_taker:.8f}', "INFO")
             logger(f'    │    Net PnL/Trade:   {net_pnl_taker:.8f} ({"PROFIT" if net_pnl_taker > 0 else "LOSS"})', "INFO")
