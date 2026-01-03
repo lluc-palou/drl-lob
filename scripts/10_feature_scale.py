@@ -188,7 +188,7 @@ def main(mode='train', test_split=0):
             aggregation_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_halflife_selection' / 'aggregation'
 
             # Try CSV first (preferred format), fallback to JSON for backward compatibility
-            csv_path = aggregation_dir / 'final_halflifes.csv'
+            csv_path = aggregation_dir / 'halflife_frequency.csv'
             json_path = aggregation_dir / 'final_halflifes.json'
 
             if csv_path.exists():
