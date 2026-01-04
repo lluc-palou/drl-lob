@@ -57,14 +57,15 @@ class EWMAStandardizationApplicator:
         input_collection_prefix: str = "split_",
         input_collection_suffix: str = "_input",
         output_collection_prefix: str = "split_",
-        output_collection_suffix: str = "_output"
+        output_collection_suffix: str = "_output",
+        fit_on_all_roles: bool = False
     ):
         """
         Apply EWMA standardization to a single split.
-        
+
         Processes hours sequentially to maintain EWMA state.
         Writes to output collection in cyclic pattern.
-        
+
         Args:
             split_id: Split ID to process
             feature_names: List of ALL feature names (for array indexing)
@@ -72,17 +73,23 @@ class EWMAStandardizationApplicator:
             input_collection_suffix: Input collection suffix
             output_collection_prefix: Output collection prefix
             output_collection_suffix: Output collection suffix
+            fit_on_all_roles: If True, fit on all data (train+val). If False, fit only on role='train'.
+                             Use True for test mode, False for train mode.
         """
         logger(f'=' * 80, "INFO")
         logger(f'APPLYING EWMA STANDARDIZATION - SPLIT {split_id}', "INFO")
         logger(f'=' * 80, "INFO")
-        
+
         input_collection = f"{input_collection_prefix}{split_id}{input_collection_suffix}"
         output_collection = f"{output_collection_prefix}{split_id}{output_collection_suffix}"
-        
+
         logger(f'Input: {input_collection}', "INFO")
         logger(f'Output: {output_collection}', "INFO")
         logger(f'Standardizing {len(self.final_halflifes)} features', "INFO")
+        if fit_on_all_roles:
+            logger(f'Fitting mode: ALL data (train+val)', "INFO")
+        else:
+            logger(f'Fitting mode: Training data only', "INFO")
         
         # Get all hours
         all_hours = get_all_hours(self.spark, self.db_name, input_collection)
@@ -162,8 +169,13 @@ class EWMAStandardizationApplicator:
 
                     # Update EWMA state (sequential learning)
                     # For training data, update the scaler
-                    if role in ('train', 'train_warmup'):
+                    if fit_on_all_roles:
+                        # TEST MODE: Update scaler on all data (train+val)
                         scaler.update(raw_value)
+                    else:
+                        # TRAIN MODE: Update scaler only on training data
+                        if role in ('train', 'train_warmup'):
+                            scaler.update(raw_value)
 
                     # Standardize using current EWMA state
                     standardized = scaler.standardize(raw_value, clip_std=self.clip_std)

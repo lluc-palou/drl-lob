@@ -229,7 +229,7 @@ def main(mode='train', test_split=0):
             logger(f'Will fit scalers for {len(final_half_lives_filtered)} features on split_{test_split}', "INFO")
             logger('=' * 80, "INFO")
             logger('FITTING EWMA SCALERS (ONE PASS)', "INFO")
-            logger('This fits scalers using selected half-lives from train mode on 100% of split_0 data', "INFO")
+            logger('This fits scalers using selected half-lives from train mode on 100% of split_0 data (train+val)', "INFO")
             logger('=' * 80, "INFO")
             logger('', "INFO")
 
@@ -247,7 +247,7 @@ def main(mode='train', test_split=0):
 
             # Fit EWMA scalers using selected half-lives
             logger('', "INFO")
-            logger('Fitting EWMA scalers on split_0...', "INFO")
+            logger('Fitting EWMA scalers on split_0 (using ALL data: train+val)...', "INFO")
 
             from src.feature_standardization.apply_scaler import EWMAStandardizationApplicator
 
@@ -258,15 +258,16 @@ def main(mode='train', test_split=0):
                 clip_std=3.0
             )
 
-            # Fit scalers by processing test split
-            logger(f'Processing split_{test_split}_input to fit scalers...', "INFO")
+            # Fit scalers by processing test split - use ALL data (train+val)
+            logger(f'Processing split_{test_split}_input to fit scalers on all data...', "INFO")
             applicator.apply_to_split(
                 split_id=test_split,
                 feature_names=all_feature_names,
                 input_collection_prefix="split_",
                 input_collection_suffix="_input",
                 output_collection_prefix="split_",
-                output_collection_suffix="_output"
+                output_collection_suffix="_output",
+                fit_on_all_roles=True  # TEST MODE: Use all data (train+val) for fitting
             )
 
             # Save scaler states

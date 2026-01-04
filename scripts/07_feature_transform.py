@@ -213,18 +213,19 @@ def main(mode='train', test_split=0):
             logger(f'Will fit {len(final_transforms_filtered)} transforms on split_{test_split}', "INFO")
             logger('=' * 80, "INFO")
             logger('FITTING SELECTED TRANSFORMATIONS (ONE PASS)', "INFO")
-            logger('This fits only the best transforms from train mode on 100% of split_0 data', "INFO")
+            logger('This fits only the best transforms from train mode on 100% of split_0 data (train+val)', "INFO")
             logger('=' * 80, "INFO")
             logger('', "INFO")
 
-            # Fit selected transforms on full split_0 data (one pass)
+            # Fit selected transforms on full split_0 data (one pass) - use ALL data (train+val)
             collection_name = f"{INPUT_COLLECTION_PREFIX}{test_split}{INPUT_COLLECTION_SUFFIX}"
             fitted_params = fit_selected_transforms_on_full_data(
                 spark=spark,
                 db_name=DB_NAME,
                 collection=collection_name,
                 feature_names=all_feature_names,
-                final_transforms=final_transforms_filtered
+                final_transforms=final_transforms_filtered,
+                fit_on_all_roles=True  # TEST MODE: Use all data (train+val) for fitting
             )
 
             # Save test mode artifacts

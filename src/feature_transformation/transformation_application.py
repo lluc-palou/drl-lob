@@ -255,7 +255,8 @@ def fit_selected_transforms_on_full_data(
     db_name: str,
     collection: str,
     feature_names: List[str],
-    final_transforms: Dict[str, str]
+    final_transforms: Dict[str, str],
+    fit_on_all_roles: bool = False
 ) -> Dict[str, Dict]:
     """
     Fit ONLY the selected transformations on 100% of training data.
@@ -269,6 +270,8 @@ def fit_selected_transforms_on_full_data(
         collection: Collection name (e.g., 'split_0_input')
         feature_names: List of all feature names
         final_transforms: Selected transform type per feature (from Stage 7)
+        fit_on_all_roles: If True, fit on all data (train+val). If False, fit only on role='train'.
+                         Use True for test mode, False for train mode.
 
     Returns:
         Dictionary of fitted parameters per feature
@@ -278,7 +281,10 @@ def fit_selected_transforms_on_full_data(
     from src.feature_transformation.data_loader import get_all_hours, load_hour_batch
     from src.feature_transformation.transforms import fit_transform_params
 
-    logger(f"Fitting selected transforms on 100% of training data from {collection}", "INFO")
+    if fit_on_all_roles:
+        logger(f"Fitting selected transforms on ALL data (train+val) from {collection}", "INFO")
+    else:
+        logger(f"Fitting selected transforms on 100% of training data from {collection}", "INFO")
 
     # Build feature index map
     feature_indices = {name: idx for idx, name in enumerate(feature_names)}
@@ -300,13 +306,16 @@ def fit_selected_transforms_on_full_data(
         if hour_count == 0:
             continue
 
-        # Collect to driver and filter training data
+        # Collect to driver and filter data based on mode
         rows = hour_df.select("features", "role").collect()
 
         for row in rows:
-            # Only use training data
-            if row['role'] != 'train':
-                continue
+            # Filter by role if fit_on_all_roles=False (train mode)
+            if not fit_on_all_roles:
+                # Only use training data in train mode
+                if row['role'] != 'train':
+                    continue
+            # In test mode (fit_on_all_roles=True), use all data (train+val)
 
             features_array = row['features']
             if features_array is None or len(features_array) != len(feature_names):
