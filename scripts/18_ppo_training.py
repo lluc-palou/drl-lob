@@ -604,11 +604,23 @@ def train_epoch(
         epoch_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
         epoch_metrics['sharpe'] = epoch_metrics['sharpe_taker']  # Legacy field (use taker for training - harder conditions)
 
-        # Compute average PnL per scenario (for Sharpe validation)
-        epoch_metrics['pnl_raw'] = np.mean(episode_returns_raw)
-        epoch_metrics['pnl_taker'] = np.mean(episode_returns_taker)
-        epoch_metrics['pnl_maker_neutral'] = np.mean(episode_returns_maker_neutral)
-        epoch_metrics['pnl_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+        # Compute mean return per scenario (Sharpe numerator - volatility-normalized log-returns)
+        epoch_metrics['return_mean_raw'] = np.mean(episode_returns_raw)
+        epoch_metrics['return_mean_taker'] = np.mean(episode_returns_taker)
+        epoch_metrics['return_mean_maker_neutral'] = np.mean(episode_returns_maker_neutral)
+        epoch_metrics['return_mean_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+
+        # Compute std return per scenario (Sharpe denominator)
+        epoch_metrics['return_std_raw'] = np.std(episode_returns_raw) if len(episode_returns_raw) > 1 else 0.0
+        epoch_metrics['return_std_taker'] = np.std(episode_returns_taker) if len(episode_returns_taker) > 1 else 0.0
+        epoch_metrics['return_std_maker_neutral'] = np.std(episode_returns_maker_neutral) if len(episode_returns_maker_neutral) > 1 else 0.0
+        epoch_metrics['return_std_maker_rebate'] = np.std(episode_returns_maker_rebate) if len(episode_returns_maker_rebate) > 1 else 0.0
+
+        # Legacy: Keep pnl_* for backward compatibility (same as return_mean_*)
+        epoch_metrics['pnl_raw'] = epoch_metrics['return_mean_raw']
+        epoch_metrics['pnl_taker'] = epoch_metrics['return_mean_taker']
+        epoch_metrics['pnl_maker_neutral'] = epoch_metrics['return_mean_maker_neutral']
+        epoch_metrics['pnl_maker_rebate'] = epoch_metrics['return_mean_maker_rebate']
     else:
         epoch_metrics['avg_reward'] = 0.0
         epoch_metrics['avg_pnl'] = 0.0
@@ -618,6 +630,14 @@ def train_epoch(
         epoch_metrics['sharpe_maker_neutral'] = 0.0
         epoch_metrics['sharpe_maker_rebate'] = 0.0
         epoch_metrics['sharpe'] = 0.0
+        epoch_metrics['return_mean_raw'] = 0.0
+        epoch_metrics['return_mean_taker'] = 0.0
+        epoch_metrics['return_mean_maker_neutral'] = 0.0
+        epoch_metrics['return_mean_maker_rebate'] = 0.0
+        epoch_metrics['return_std_raw'] = 0.0
+        epoch_metrics['return_std_taker'] = 0.0
+        epoch_metrics['return_std_maker_neutral'] = 0.0
+        epoch_metrics['return_std_maker_rebate'] = 0.0
         epoch_metrics['pnl_raw'] = 0.0
         epoch_metrics['pnl_taker'] = 0.0
         epoch_metrics['pnl_maker_neutral'] = 0.0
@@ -862,11 +882,23 @@ def validate_epoch(
         val_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
         val_metrics['sharpe'] = val_metrics['sharpe_taker']  # Legacy field (use taker for training - harder conditions)
 
-        # Compute average PnL per scenario (for Sharpe validation)
-        val_metrics['pnl_raw'] = np.mean(episode_returns_raw)
-        val_metrics['pnl_taker'] = np.mean(episode_returns_taker)
-        val_metrics['pnl_maker_neutral'] = np.mean(episode_returns_maker_neutral)
-        val_metrics['pnl_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+        # Compute mean return per scenario (Sharpe numerator - volatility-normalized log-returns)
+        val_metrics['return_mean_raw'] = np.mean(episode_returns_raw)
+        val_metrics['return_mean_taker'] = np.mean(episode_returns_taker)
+        val_metrics['return_mean_maker_neutral'] = np.mean(episode_returns_maker_neutral)
+        val_metrics['return_mean_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+
+        # Compute std return per scenario (Sharpe denominator)
+        val_metrics['return_std_raw'] = np.std(episode_returns_raw) if len(episode_returns_raw) > 1 else 0.0
+        val_metrics['return_std_taker'] = np.std(episode_returns_taker) if len(episode_returns_taker) > 1 else 0.0
+        val_metrics['return_std_maker_neutral'] = np.std(episode_returns_maker_neutral) if len(episode_returns_maker_neutral) > 1 else 0.0
+        val_metrics['return_std_maker_rebate'] = np.std(episode_returns_maker_rebate) if len(episode_returns_maker_rebate) > 1 else 0.0
+
+        # Legacy: Keep pnl_* for backward compatibility (same as return_mean_*)
+        val_metrics['pnl_raw'] = val_metrics['return_mean_raw']
+        val_metrics['pnl_taker'] = val_metrics['return_mean_taker']
+        val_metrics['pnl_maker_neutral'] = val_metrics['return_mean_maker_neutral']
+        val_metrics['pnl_maker_rebate'] = val_metrics['return_mean_maker_rebate']
     else:
         val_metrics['avg_reward'] = 0.0
         val_metrics['avg_pnl'] = 0.0
@@ -875,6 +907,14 @@ def validate_epoch(
         val_metrics['sharpe_maker_neutral'] = 0.0
         val_metrics['sharpe_maker_rebate'] = 0.0
         val_metrics['sharpe'] = 0.0
+        val_metrics['return_mean_raw'] = 0.0
+        val_metrics['return_mean_taker'] = 0.0
+        val_metrics['return_mean_maker_neutral'] = 0.0
+        val_metrics['return_mean_maker_rebate'] = 0.0
+        val_metrics['return_std_raw'] = 0.0
+        val_metrics['return_std_taker'] = 0.0
+        val_metrics['return_std_maker_neutral'] = 0.0
+        val_metrics['return_std_maker_rebate'] = 0.0
         val_metrics['pnl_raw'] = 0.0
         val_metrics['pnl_taker'] = 0.0
         val_metrics['pnl_maker_neutral'] = 0.0
@@ -955,12 +995,16 @@ def train_split(
         'epoch',
         # Training metrics - all Sharpe scenarios (ONLY taker is optimized)
         'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
+        'train_return_mean_buyhold', 'train_return_mean_taker', 'train_return_mean_maker_neutral', 'train_return_mean_maker_rebate',
+        'train_return_std_buyhold', 'train_return_std_taker', 'train_return_std_maker_neutral', 'train_return_std_maker_rebate',
         'train_pnl_buyhold', 'train_pnl_taker', 'train_pnl_maker_neutral', 'train_pnl_maker_rebate',
         'train_avg_reward', 'train_avg_pnl',
         'train_policy_loss', 'train_value_loss', 'train_entropy',
         'train_uncertainty', 'train_activity', 'train_turnover',
         # Validation metrics - Sharpe scenarios + PnL (no loss/entropy metrics)
         'val_sharpe_buyhold', 'val_sharpe_taker', 'val_sharpe_maker_neutral', 'val_sharpe_maker_rebate',
+        'val_return_mean_buyhold', 'val_return_mean_taker', 'val_return_mean_maker_neutral', 'val_return_mean_maker_rebate',
+        'val_return_std_buyhold', 'val_return_std_taker', 'val_return_std_maker_neutral', 'val_return_std_maker_rebate',
         'val_pnl_buyhold', 'val_pnl_taker', 'val_pnl_maker_neutral', 'val_pnl_maker_rebate',
         'val_avg_reward', 'val_avg_pnl', 'val_activity',
         'learning_rate'
@@ -1179,12 +1223,16 @@ def train_test_mode(
         'epoch',
         # Training metrics (full split) - ONLY taker is optimized
         'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
+        'train_return_mean_buyhold', 'train_return_mean_taker', 'train_return_mean_maker_neutral', 'train_return_mean_maker_rebate',
+        'train_return_std_buyhold', 'train_return_std_taker', 'train_return_std_maker_neutral', 'train_return_std_maker_rebate',
         'train_pnl_buyhold', 'train_pnl_taker', 'train_pnl_maker_neutral', 'train_pnl_maker_rebate',
         'train_avg_reward', 'train_avg_pnl',
         'train_policy_loss', 'train_value_loss', 'train_entropy',
         'train_uncertainty', 'train_activity', 'train_turnover',
         # Test metrics (test_data) - Sharpe scenarios + PnL
         'test_sharpe_buyhold', 'test_sharpe_taker', 'test_sharpe_maker_neutral', 'test_sharpe_maker_rebate',
+        'test_return_mean_buyhold', 'test_return_mean_taker', 'test_return_mean_maker_neutral', 'test_return_mean_maker_rebate',
+        'test_return_std_buyhold', 'test_return_std_taker', 'test_return_std_maker_neutral', 'test_return_std_maker_rebate',
         'test_pnl_buyhold', 'test_pnl_taker', 'test_pnl_maker_neutral', 'test_pnl_maker_rebate',
         'test_avg_reward', 'test_avg_pnl', 'test_activity',
         'learning_rate'
