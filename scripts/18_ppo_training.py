@@ -942,11 +942,11 @@ def train_split(
 
     # Learning rate scheduler - reduces LR when validation Sharpe plateaus
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.3, patience=2, min_lr=1e-7
+        optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-8
     )
 
     logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
-    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.3, patience=2, min_lr=1e-7)', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.5, patience=5, min_lr=1e-8)', "INFO")
     logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, turnover={config.ppo.turnover_coef}', "INFO")
 
     # Setup CSV logging for epoch results
@@ -1166,11 +1166,11 @@ def train_test_mode(
 
     # Learning rate scheduler
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.3, patience=2, min_lr=1e-7
+        optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-8
     )
 
     logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
-    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.3, patience=2, min_lr=1e-7)', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.5, patience=5, min_lr=1e-8)', "INFO")
     logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, turnover={config.ppo.turnover_coef}', "INFO")
 
     # Setup CSV logging for epoch results
