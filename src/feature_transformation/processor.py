@@ -208,12 +208,13 @@ class FeatureTransformProcessor:
                     train_sample_counts[feat_name] += len(hour_samples[feat_name])
             
             hours_processed += 1
-            
-            # Log progress
+
+            # Log progress - show every hour for first 10, then every 5
             hour_duration = time.time() - hour_start
-            if (i + 1) % 5 == 0 or (i + 1) == len(all_hours):
+            if (i + 1) <= 10 or (i + 1) % 5 == 0 or (i + 1) == len(all_hours):
                 logger(f'Pass 1 - Processed hour {i+1}/{len(all_hours)} '
-                       f'({hour.strftime("%Y-%m-%d %H:%M")}) in {hour_duration:.2f}s', 
+                       f'({hour.strftime("%Y-%m-%d %H:%M")}) in {hour_duration:.2f}s '
+                       f'- Batch: {batch_count} samples',
                        "INFO")
         
         # Now fit transformations on accumulated training data
@@ -366,12 +367,13 @@ class FeatureTransformProcessor:
                             validation_accumulators[feat_name][transform_type].append(transformed)
             
             hours_processed += 1
-            
-            # Log progress
+
+            # Log progress - show every hour for first 10, then every 5
             hour_duration = time.time() - hour_start
-            if (i + 1) % 5 == 0 or (i + 1) == len(all_hours):
+            if (i + 1) <= 10 or (i + 1) % 5 == 0 or (i + 1) == len(all_hours):
                 logger(f'Pass 2 - Processed hour {i+1}/{len(all_hours)} '
-                       f'({hour.strftime("%Y-%m-%d %H:%M")}) in {hour_duration:.2f}s',
+                       f'({hour.strftime("%Y-%m-%d %H:%M")}) in {hour_duration:.2f}s '
+                       f'- Batch: {batch_count} samples',
                        "INFO")
         
         # Compute P/DF scores for each transformation

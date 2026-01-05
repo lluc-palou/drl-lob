@@ -3,6 +3,9 @@ Feature Standardization Selection Script (Stage 10)
 
 Selects optimal EWMA half-life for feature standardization using CPCV splits.
 
+TRAIN MODE: Processes all splits, selects best half-lives across splits
+TEST MODE: Processes split_0 only, fits scalers, saves test_mode artifacts
+
 Input: split_X_output collections with 18 features (after transformation)
 Processes: 16 features (excludes volatility and fwd_logret_1)
 Output: Half-life selections for 16 features
@@ -12,11 +15,14 @@ Exclusions from standardization:
 - fwd_logret_1: Target variable, keep original scale
 
 Usage:
-    python scripts/10_feature_scale.py
+    TRAIN: python scripts/10_feature_scale.py --mode train
+    TEST:  python scripts/10_feature_scale.py --mode test --test-split 0
 """
 
 import os
 import sys
+import argparse
+import json
 from pathlib import Path
 
 # Setup paths
@@ -38,27 +44,8 @@ if sys.platform == 'win32':
         except:
             pass
 
-try:
-    from mlflow.tracking._tracking_service import client as mlflow_client
-    
-    _original_log_url = mlflow_client.TrackingServiceClient._log_url
-    
-    def _patched_log_url(self, run_id):
-        try:
-            run = self.get_run(run_id)
-            run_name = run.info.run_name or run_id
-            run_url = self._get_run_url(run.info.experiment_id, run_id)
-            sys.stdout.write(f"[RUN] View run {run_name} at: {run_url}\n")
-            sys.stdout.flush()
-        except:
-            pass
-    
-    mlflow_client.TrackingServiceClient._log_url = _patched_log_url
-except:
-    pass
+# MLflow removed - not needed for this pipeline
 # =================================================================================================
-
-import mlflow
 
 from src.utils.logging import logger, log_section
 from src.utils.spark import create_spark_session
@@ -68,10 +55,6 @@ from src.feature_standardization import (
     select_final_half_lives,
     identify_feature_names_from_collection
 )
-from src.feature_standardization.mlflow_logger import (
-    log_split_results,
-    log_aggregated_results
-)
 
 # =================================================================================================
 # Configuration
@@ -80,9 +63,6 @@ from src.feature_standardization.mlflow_logger import (
 DB_NAME = "raw"
 INPUT_COLLECTION_PREFIX = "split_"
 INPUT_COLLECTION_SUFFIX = "_input"  # Read from transformation output
-
-MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
-MLFLOW_EXPERIMENT_NAME = "Feature_Standardization"
 
 HALF_LIFE_CANDIDATES = [5, 10, 20, 40, 60]
 
@@ -140,15 +120,15 @@ def filter_standardizable_features(feature_names):
 # Main Execution
 # =================================================================================================
 
-def main():
+def main(mode='train', test_split=0):
     """Main execution function."""
-    log_section('FEATURE STANDARDIZATION SELECTION (STAGE 10)')
-    
-    # Setup MLflow
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-    logger(f'MLflow experiment: {MLFLOW_EXPERIMENT_NAME}', "INFO")
-    
+    log_section(f'FEATURE STANDARDIZATION SELECTION (STAGE 10) - {mode.upper()} MODE')
+
+    logger(f'Mode: {mode}', "INFO")
+    if mode == 'test':
+        logger(f'Test split: {test_split}', "INFO")
+    logger('', "INFO")
+
     # Create Spark session (uses default 8GB driver memory and jar path)
     logger('', "INFO")
     logger('Initializing Spark...', "INFO")
@@ -196,6 +176,125 @@ def main():
         if not split_ids:
             raise ValueError(f'No split collections found matching pattern: {INPUT_COLLECTION_PREFIX}X{INPUT_COLLECTION_SUFFIX}')
 
+        # ============================================================================
+        # TEST MODE: Fit scalers with selected half-lives (ONE PASS)
+        # ============================================================================
+        if mode == 'test':
+            logger(f'Found {len(split_ids)} split collections', "INFO")
+            logger(f'TEST MODE: Fitting scalers on split_{test_split}', "INFO")
+            logger('', "INFO")
+
+            # Load selected half-lives from train mode artifacts
+            aggregation_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_halflife_selection' / 'aggregation'
+
+            # Try CSV first (preferred format), fallback to JSON for backward compatibility
+            csv_path = aggregation_dir / 'halflife_frequency.csv'
+            json_path = aggregation_dir / 'final_halflifes.json'
+
+            if csv_path.exists():
+                logger(f'Loading half-lives from CSV: {csv_path}', "INFO")
+                import pandas as pd
+                df = pd.read_csv(csv_path)
+
+                # Auto-detect column names (handle different formats)
+                if 'feature' in df.columns and 'half_life' in df.columns:
+                    final_half_lives = dict(zip(df['feature'], df['half_life']))
+                elif 'feature_name' in df.columns and 'selected_half_life' in df.columns:
+                    final_half_lives = dict(zip(df['feature_name'], df['selected_half_life']))
+                else:
+                    # Assume first column is feature name, second is half-life value
+                    final_half_lives = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+
+            elif json_path.exists():
+                logger(f'Loading half-lives from JSON: {json_path}', "INFO")
+                with open(json_path, 'r') as f:
+                    final_half_lives = json.load(f)
+            else:
+                raise FileNotFoundError(
+                    f"Train mode half-lives not found. Looked for:\n"
+                    f"  CSV: {csv_path}\n"
+                    f"  JSON: {json_path}\n"
+                    f"Please run Stage 10 in train mode first: python scripts/10_feature_scale.py --mode train"
+                )
+
+            logger(f'Loaded {len(final_half_lives)} selected half-lives from train mode', "INFO")
+            logger('', "INFO")
+
+            # Filter to only standardizable features
+            final_half_lives_filtered = {
+                feat: hl for feat, hl in final_half_lives.items()
+                if feat in feature_names
+            }
+
+            logger(f'Will fit scalers for {len(final_half_lives_filtered)} features on split_{test_split}', "INFO")
+            logger('=' * 80, "INFO")
+            logger('FITTING EWMA SCALERS (ONE PASS)', "INFO")
+            logger('This fits scalers using selected half-lives from train mode on 100% of split_0 data (train+val)', "INFO")
+            logger('=' * 80, "INFO")
+            logger('', "INFO")
+
+            # Save test mode half-lives (copy for Stage 12)
+            test_mode_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_halflife_selection' / 'test_mode'
+            test_mode_dir.mkdir(parents=True, exist_ok=True)
+
+            halflifes_file = test_mode_dir / 'final_halflifes.json'
+            with open(halflifes_file, 'w') as f:
+                json.dump(final_half_lives_filtered, f, indent=2)
+
+            logger('', "INFO")
+            logger(f'Saved test mode half-lives to: {halflifes_file}', "INFO")
+            logger(f'Features: {len(final_half_lives_filtered)}', "INFO")
+
+            # Fit EWMA scalers using selected half-lives
+            logger('', "INFO")
+            logger('Fitting EWMA scalers on split_0 (using ALL data: train+val)...', "INFO")
+
+            from src.feature_standardization.apply_scaler import EWMAStandardizationApplicator
+
+            applicator = EWMAStandardizationApplicator(
+                spark=spark,
+                db_name=DB_NAME,
+                final_halflifes=final_half_lives_filtered,
+                clip_std=3.0
+            )
+
+            # Fit scalers by processing test split - use ALL data (train+val)
+            logger(f'Processing split_{test_split}_input to fit scalers on all data...', "INFO")
+            applicator.apply_to_split(
+                split_id=test_split,
+                feature_names=all_feature_names,
+                input_collection_prefix="split_",
+                input_collection_suffix="_input",
+                output_collection_prefix="split_",
+                output_collection_suffix="_output",
+                fit_on_all_roles=True  # TEST MODE: Use all data (train+val) for fitting
+            )
+
+            # Save scaler states
+            scaler_states_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_standardization' / 'scaler_states'
+            scaler_states_dir.mkdir(parents=True, exist_ok=True)
+
+            scaler_states_file = scaler_states_dir / 'test_mode_scaler_states.json'
+            scaler_states = applicator.get_scaler_states()
+
+            with open(scaler_states_file, 'w') as f:
+                json.dump(scaler_states, f, indent=2)
+
+            logger('', "INFO")
+            logger(f'Saved scaler states to: {scaler_states_file}', "INFO")
+            logger(f'Features: {len(scaler_states)}', "INFO")
+
+            log_section('TEST MODE COMPLETED (ONE PASS)')
+            logger(f'Loaded half-lives from train mode, fitted scalers on split_{test_split}', "INFO")
+            logger(f'Half-lives: {halflifes_file}', "INFO")
+            logger(f'Scaler states: {scaler_states_file}', "INFO")
+            logger(f'Output: split_{test_split}_output', "INFO")
+
+            return 0  # Exit after test mode
+
+        # ============================================================================
+        # TRAIN MODE: Process all splits
+        # ============================================================================
         logger(f'Found {len(split_ids)} split collections: {split_ids}', "INFO")
         logger(f'Processing {len(feature_names)} standardizable features across {len(split_ids)} splits', "INFO")
         logger(f'Testing half-life values: {HALF_LIFE_CANDIDATES}', "INFO")
@@ -220,10 +319,6 @@ def main():
             )
             all_split_results[split_id] = split_results
 
-            # Log to MLflow
-            # Note: processor doesn't expose train_sample_rate, default is 0.1 (10%)
-            log_split_results(split_id, split_results, train_sample_rate=0.1)
-        
         # Aggregate results across splits
         logger('', "INFO")
         log_section('AGGREGATING RESULTS ACROSS SPLITS')
@@ -234,14 +329,10 @@ def main():
         logger('Selecting optimal half-lives per feature...', "INFO")
         final_half_lives = select_final_half_lives(aggregated, strategy='most_frequent')
 
-        # Log aggregated results
-        log_aggregated_results(aggregated, final_half_lives)
-        
         # Save results
         results_dir = Path(REPO_ROOT) / 'artifacts' / 'ewma_halflife_selection'
         results_dir.mkdir(parents=True, exist_ok=True)
-        
-        import json
+
         results_file = results_dir / 'standardization_selection.json'
         with open(results_file, 'w') as f:
             json.dump({
@@ -278,5 +369,12 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Feature standardization selection')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                       help='Pipeline mode: train (all splits) or test (split_0 only)')
+    parser.add_argument('--test-split', type=int, default=0,
+                       help='Split ID to use in test mode (default: 0)')
+    args = parser.parse_args()
+
     is_orchestrated = os.environ.get('PIPELINE_ORCHESTRATED', 'false') == 'true'
-    main()
+    main(mode=args.mode, test_split=args.test_split)

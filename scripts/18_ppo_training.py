@@ -1,26 +1,25 @@
 """
-PPO Agent Training Script (Stage 18)
+PPO Agent Training Script (Stage 21)
+
+TRAIN MODE: Trains PPO agents using CPCV (train/val split)
+TEST MODE: Trains on full split_0 (train+val) and evaluates on test_data
 
 Trains PPO agents for limit order book trading using VQ-VAE latent representations
 and hand-crafted features.
 
-This is Stage 18 in the pipeline - follows synthetic generation (Stage 17) or can use
-VQ-VAE production training output (Stage 14) directly.
+Train Mode:
+- Input: split_X_input (role='train' for training, role='validation' for eval)
+- Output: CPCV train/val metrics, best models per split
+- Saves to: artifacts/ppo_training/experiment_X/split_Y/
 
-Input: split_X_input collections in database 'raw' with:
-       - codebook: VQ-VAE latent codes [0-127]
-       - features: hand-crafted features (18 dimensions)
-       - target: forward returns
-       - timestamp: Unix timestamps
-       - role: 'train' or 'validation'
-       - fold_id: fold identifier
-
-Output: Trained PPO agents saved to artifacts/ppo_agents/
-        MLflow tracking with training metrics
-        Checkpoints for best models per split
+Test Mode:
+- Input: split_0_input (all roles for training), test_data (for evaluation)
+- Output: Final test metrics (Sharpe for all fee scenarios)
+- Saves to: artifacts/ppo_training/test/experiment_X/
 
 Usage:
-    python scripts/18_ppo_training.py
+    TRAIN: python scripts/18_ppo_training.py --experiment 1 --mode train
+    TEST:  python scripts/18_ppo_training.py --experiment 1 --mode test --test-split 0
 """
 
 import os
@@ -72,6 +71,8 @@ import torch
 import torch.optim as optim
 import mlflow
 import numpy as np
+import math
+import csv
 from datetime import datetime
 from pymongo import MongoClient, ASCENDING
 
@@ -91,6 +92,7 @@ from src.ppo import (
     compute_simple_reward,
     compute_unrealized_pnl,
     compute_ewma_volatility,
+    compute_directional_bonus,
     ModelConfig,
     PPOConfig,
     RewardConfig,
@@ -250,9 +252,10 @@ def run_episode(
         if state is None:
             continue
 
-        codebooks = state['codebooks'].to(device)
-        features = state['features'].to(device)
-        timestamps = state['timestamps'].to(device)
+        # Use non-blocking transfers with pinned memory for better performance
+        codebooks = state['codebooks'].to(device, non_blocking=True)
+        features = state['features'].to(device, non_blocking=True)
+        timestamps = state['timestamps'].to(device, non_blocking=True)
 
         # Get current sample
         current_sample = episode.samples[t]
@@ -283,8 +286,15 @@ def run_episode(
         log_prob_val = log_prob.item() if not deterministic else 0.0
         value_val = value.item()
 
-        # Get immediate target (one-step forward return)
-        target = current_sample['target']
+        # Get multi-step cumulative target (H-step forward returns)
+        H = model_config.horizon  # 10
+        multistep_target = 0.0
+
+        # Sum next H forward returns (or remaining if episode ends sooner)
+        for i in range(1, min(H + 1, len(episode.samples) - t)):
+            multistep_target += episode.samples[t + i]['target']
+
+        target = multistep_target
 
         # Compute position using agent's policy distribution (action mean + std)
         # This allows PPO to learn position sizing directly through confidence (std)
@@ -298,21 +308,70 @@ def run_episode(
         position_prev = agent_state.current_position
 
         # Compute reward using simple PnL-based formula
+        # TRAINING SCENARIO: Taker fees (10 bps transaction cost)
+        # Agent learns under harder conditions - forces better position sizing and directional edge
+        # Higher fees encourage more selective, higher-quality trades over frequent trading
         reward, gross_pnl, tc = compute_simple_reward(
-            position_prev, position_curr, target, taker_fee=0.0005
+            position_prev, position_curr, target, taker_fee=0.001  # 10 bps taker fee
         )
 
+        # Compute directional accuracy bonus (for reward shaping, not logged PnL)
+        # Provides additional signal when agent predicts direction correctly
+        # This bonus affects ONLY the reward signal for learning, not the logged gross_pnl metric
+        # Uses default bonus_weight=0.000002 (~25% of H=10 gross PnL, avoiding signal dominance)
+        directional_bonus = compute_directional_bonus(position_curr, target)
+
         # Scale reward by realized volatility (EWMA of recent returns)
-        # Collect recent targets from past samples (window + current)
+        # Collect recent 1-step targets from past samples for volatility estimate
         lookback = min(30, t)  # Use up to 30 recent samples for volatility estimate
         recent_targets = [episode.samples[t - i]['target'] for i in range(lookback, 0, -1)]
-        recent_targets.append(target)  # Include current target
+        recent_targets.append(episode.samples[t]['target'])  # Include current 1-step target
 
-        # Compute EWMA volatility from recent returns (half-life=20, matches feature engineering)
-        realized_vol = compute_ewma_volatility(recent_targets, half_life=20)
+        # Compute EWMA volatility from recent 1-step returns (half-life=20, matches feature engineering)
+        step1_vol = compute_ewma_volatility(recent_targets, half_life=20)
 
-        # Scale reward by volatility (Sharpe-like normalization)
-        reward = reward / realized_vol
+        # Scale to H-step volatility using sqrt(H) rule (standard financial theory)
+        # Multi-step volatility = single-step volatility × sqrt(H)
+        realized_vol = step1_vol * math.sqrt(model_config.horizon)
+
+        # Compute trading returns for all fee scenarios
+        # TWO versions: volatility-normalized (for training rewards) and raw (for analysis/Sharpe)
+        position_change = abs(position_curr - position_prev)
+
+        # 1. Baseline: Buy-and-hold (constant position of +1.0)
+        # Volatility-normalized (for stable training reward signal)
+        trading_return_raw = target / realized_vol
+        # Raw log return (for Sharpe analysis)
+        raw_log_return_buyhold = target
+
+        # 2. Maker neutral (0 bps) - agent's position sizing, no TC
+        tc_maker_neutral = 0.0  # No transaction cost
+        reward_maker_neutral = gross_pnl - tc_maker_neutral
+        # Volatility-normalized (for training)
+        trading_return_maker_neutral = reward_maker_neutral / realized_vol
+        # Raw log return (for analysis)
+        raw_log_return_maker_neutral = reward_maker_neutral
+
+        # 3. Taker fee (10 bps) - market orders with agent's position sizing [TRAINING SCENARIO]
+        tc_taker = 0.001 * position_change  # 10 basis points (matches training reward)
+        reward_taker = gross_pnl - tc_taker
+        # Volatility-normalized (for training)
+        trading_return_taker = reward_taker / realized_vol
+        # Raw log return (for analysis)
+        raw_log_return_taker = reward_taker
+
+        # 4. Maker rebate (-2.5 bps) - limit orders with rebate
+        tc_maker_rebate = -0.00025 * position_change  # -2.5 basis points (rebate)
+        reward_maker_rebate = gross_pnl - tc_maker_rebate
+        # Volatility-normalized (for training)
+        trading_return_maker_rebate = reward_maker_rebate / realized_vol
+        # Raw log return (for analysis)
+        raw_log_return_maker_rebate = reward_maker_rebate
+
+        # Add directional bonus to reward for learning signal (PPO optimization)
+        # Note: All trading_return_* and raw_log_return_* exclude bonus for accurate metrics
+        # reward here is already maker_neutral (0 TC), so just add bonus and scale
+        reward = (reward + directional_bonus) / realized_vol
 
         # Unrealized PnL for next timestep
         unrealized = compute_unrealized_pnl(position_curr, target)
@@ -326,8 +385,13 @@ def run_episode(
 
         # Update agent state with policy-based position
         # Track action_std instead of volatility (agent's learned uncertainty)
-        agent_state.update(position_curr, log_return, tc, reward, unrealized, gross_pnl, action_std_val)
-        episode_returns.append(reward)
+        # Pass both volatility-normalized returns (for training) and raw log returns (for analysis)
+        agent_state.update(
+            position_curr, log_return, tc, reward, unrealized, gross_pnl, action_std_val,
+            trading_return_raw, trading_return_taker, trading_return_maker_neutral, trading_return_maker_rebate,
+            raw_log_return_buyhold, raw_log_return_taker, raw_log_return_maker_neutral, raw_log_return_maker_rebate
+        )
+        episode_returns.append(trading_return_taker)  # Taker (5 bps) is training scenario - harder conditions for better learning
 
         # Check if episode should end
         done = (t >= valid_steps[-1])
@@ -397,10 +461,15 @@ def train_epoch(
         'total_entropy': 0.0,
         'total_uncertainty': 0.0,
         'total_activity': 0.0,
+        'total_turnover': 0.0,
         'n_ppo_updates': 0
     }
 
-    episode_returns = []
+    # Episode returns for Sharpe ratio calculation (different fee scenarios)
+    episode_returns_raw = []  # Baseline: Raw returns (no fees)
+    episode_returns_taker = []  # Taker fee 5 bps (market orders)
+    episode_returns_maker_neutral = []  # Maker fee 0 bps (limit orders)
+    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps (limit orders)
 
     # Use ALL training episodes each epoch
     total_episodes = len(episodes)
@@ -412,7 +481,7 @@ def train_epoch(
         'total_trades': 0, 'total_steps': 0,
         'sum_mean_pos': 0.0, 'max_pos': 0.0,
         'sum_mean_std': 0.0, 'min_std': float('inf'), 'max_std': float('-inf'),
-        'sum_gross_pnl_per_trade': 0.0, 'sum_tc_per_trade': 0.0
+        'sum_gross_pnl_per_trade': 0.0, 'sum_position_change_per_trade': 0.0
     })
 
     for ep_idx, episode in enumerate(episodes, 1):
@@ -428,7 +497,12 @@ def train_epoch(
         epoch_metrics['total_pnl'] += metrics['total_pnl']
         epoch_metrics['episode_count'] += 1
         epoch_metrics['avg_episode_length'] += metrics['episode_length']
-        episode_returns.append(metrics['total_reward'])
+
+        # Append RAW log returns for all fee scenarios (for Sharpe calculation - NOT volatility normalized)
+        episode_returns_raw.append(metrics['cumulative_raw_return_buyhold'])
+        episode_returns_taker.append(metrics['cumulative_raw_return_taker'])
+        episode_returns_maker_neutral.append(metrics['cumulative_raw_return_maker_neutral'])
+        episode_returns_maker_rebate.append(metrics['cumulative_raw_return_maker_rebate'])
 
         # Aggregate metrics by parent episode (day)
         parent_id = episode.parent_id if episode.parent_id is not None else ep_idx
@@ -444,7 +518,7 @@ def train_epoch(
         dm['min_std'] = min(dm['min_std'], metrics['min_action_std'])
         dm['max_std'] = max(dm['max_std'], metrics['max_action_std'])
         dm['sum_gross_pnl_per_trade'] += metrics['avg_gross_pnl_per_trade']
-        dm['sum_tc_per_trade'] += metrics['avg_tc_per_trade']
+        dm['sum_position_change_per_trade'] += metrics['avg_position_change_per_trade']
 
         # Log when completing a parent episode (all chunks done)
         is_last_chunk = (ep_idx == total_episodes or
@@ -453,16 +527,53 @@ def train_epoch(
         if is_last_chunk:
             from src.utils.logging import logger
             n_chunks = dm['chunks']
-            logger(f'    Day {len([k for k in day_metrics.keys() if day_metrics[k]["chunks"] > 0])}/{len(set(e.parent_id if e.parent_id is not None else i for i, e in enumerate(episodes, 1)))} '
-                   f'({n_chunks} chunks) - '
-                   f'Reward: {dm["total_reward"]:.4f}, '
-                   f'PnL: {dm["total_pnl"]:.4f}, '
-                   f'Trades: {dm["total_trades"]} ({dm["total_trades"]/dm["total_steps"]:.2%}), '
-                   f'Pos[μ={dm["sum_mean_pos"]/n_chunks:.4f}, max={dm["max_pos"]:.4f}], '
-                   f'Std[μ={dm["sum_mean_std"]/n_chunks:.4f}, range=[{dm["min_std"]:.4f},{dm["max_std"]:.4f}]], '
-                   f'Gross PnL/Trade: {dm["sum_gross_pnl_per_trade"]/n_chunks:.6f}, '
-                   f'TC/Trade: {dm["sum_tc_per_trade"]/n_chunks:.6f}, '
-                   f'Steps: {dm["total_steps"]}', "INFO")
+
+            # Calculate aggregated metrics
+            avg_position = dm['sum_mean_pos'] / n_chunks
+            avg_uncertainty = dm['sum_mean_std'] / n_chunks
+            avg_gross_pnl = dm['sum_gross_pnl_per_trade'] / n_chunks
+            avg_position_change = dm['sum_position_change_per_trade'] / n_chunks
+            trade_frequency = dm['total_trades'] / dm['total_steps']
+
+            # Compute TC for all fee scenarios from position change
+            taker_fee = 0.001  # 10 bps
+            maker_fee_neutral = 0.0  # 0 bps
+            maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
+
+            avg_tc_taker = taker_fee * avg_position_change
+            avg_tc_maker_neutral = maker_fee_neutral * avg_position_change
+            avg_tc_maker_rebate = maker_fee_rebate * avg_position_change
+
+            # Net PnL for each scenario
+            net_pnl_taker = avg_gross_pnl - avg_tc_taker
+            net_pnl_maker_neutral = avg_gross_pnl - avg_tc_maker_neutral
+            net_pnl_maker_rebate = avg_gross_pnl - avg_tc_maker_rebate
+
+            day_num = len([k for k in day_metrics.keys() if day_metrics[k]["chunks"] > 0])
+            total_days = len(set(e.parent_id if e.parent_id is not None else i for i, e in enumerate(episodes, 1)))
+
+            logger(f'    ┌─ Day {day_num}/{total_days} ({n_chunks} chunks, {dm["total_steps"]} steps)', "INFO")
+            logger(f'    │  Trading Activity: {dm["total_trades"]} trades ({trade_frequency:.1%} frequency)', "INFO")
+            logger(f'    │  Position Sizing: Mean={avg_position:.3f}, Max={dm["max_pos"]:.3f}', "INFO")
+            logger(f'    │  Action Uncertainty (σ): Mean={avg_uncertainty:.3f}, Range=[{dm["min_std"]:.3f}, {dm["max_std"]:.3f}]', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Performance (Market Orders - Taker Fee 10 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_taker:.8f}', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_taker:.8f} ({"PROFIT" if net_pnl_taker > 0 else "LOSS"})', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Alternative: Limit Orders (Maker Fee 0 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_maker_neutral:.8f}', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_maker_neutral:.8f} ({"PROFIT" if net_pnl_maker_neutral > 0 else "LOSS"})', "INFO")
+            logger(f'    │    Improvement:     {(net_pnl_maker_neutral - net_pnl_taker):.8f}', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Alternative: Limit Orders (Maker Rebate -2.5 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_maker_rebate:.8f} (rebate)', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_maker_rebate:.8f} ({"PROFIT" if net_pnl_maker_rebate > 0 else "LOSS"})', "INFO")
+            logger(f'    │    Improvement:     {(net_pnl_maker_rebate - net_pnl_taker):.8f}', "INFO")
+            logger(f'    └─', "INFO")
 
         # Perform PPO update if buffer is full
         if trajectory_buffer.is_full():
@@ -474,6 +585,7 @@ def train_epoch(
             epoch_metrics['total_entropy'] += loss_metrics['entropy']
             epoch_metrics['total_uncertainty'] += loss_metrics['uncertainty']
             epoch_metrics['total_activity'] += loss_metrics['activity']
+            epoch_metrics['total_turnover'] += loss_metrics['turnover']
             epoch_metrics['n_ppo_updates'] += 1
             trajectory_buffer.clear()
 
@@ -495,12 +607,42 @@ def train_epoch(
         epoch_metrics['avg_reward'] = epoch_metrics['total_reward'] / epoch_metrics['episode_count']
         epoch_metrics['avg_pnl'] = epoch_metrics['total_pnl'] / epoch_metrics['episode_count']
         epoch_metrics['avg_episode_length'] /= epoch_metrics['episode_count']
-        epoch_metrics['sharpe'] = compute_sharpe_ratio(episode_returns)
+
+        # Compute Sharpe ratios for all fee scenarios
+        epoch_metrics['sharpe_raw'] = compute_sharpe_ratio(episode_returns_raw)  # Baseline: no fees
+        epoch_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 10 bps
+        epoch_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
+        epoch_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
+        epoch_metrics['sharpe'] = epoch_metrics['sharpe_taker']  # Legacy field (use taker for training - harder conditions)
+
+        # Compute mean return per scenario (Sharpe numerator - raw cumulative log-returns)
+        epoch_metrics['return_mean_raw'] = np.mean(episode_returns_raw)
+        epoch_metrics['return_mean_taker'] = np.mean(episode_returns_taker)
+        epoch_metrics['return_mean_maker_neutral'] = np.mean(episode_returns_maker_neutral)
+        epoch_metrics['return_mean_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+
+        # Compute std return per scenario (Sharpe denominator)
+        epoch_metrics['return_std_raw'] = np.std(episode_returns_raw) if len(episode_returns_raw) > 1 else 0.0
+        epoch_metrics['return_std_taker'] = np.std(episode_returns_taker) if len(episode_returns_taker) > 1 else 0.0
+        epoch_metrics['return_std_maker_neutral'] = np.std(episode_returns_maker_neutral) if len(episode_returns_maker_neutral) > 1 else 0.0
+        epoch_metrics['return_std_maker_rebate'] = np.std(episode_returns_maker_rebate) if len(episode_returns_maker_rebate) > 1 else 0.0
     else:
         epoch_metrics['avg_reward'] = 0.0
         epoch_metrics['avg_pnl'] = 0.0
         epoch_metrics['avg_episode_length'] = 0.0
+        epoch_metrics['sharpe_raw'] = 0.0
+        epoch_metrics['sharpe_taker'] = 0.0
+        epoch_metrics['sharpe_maker_neutral'] = 0.0
+        epoch_metrics['sharpe_maker_rebate'] = 0.0
         epoch_metrics['sharpe'] = 0.0
+        epoch_metrics['return_mean_raw'] = 0.0
+        epoch_metrics['return_mean_taker'] = 0.0
+        epoch_metrics['return_mean_maker_neutral'] = 0.0
+        epoch_metrics['return_mean_maker_rebate'] = 0.0
+        epoch_metrics['return_std_raw'] = 0.0
+        epoch_metrics['return_std_taker'] = 0.0
+        epoch_metrics['return_std_maker_neutral'] = 0.0
+        epoch_metrics['return_std_maker_rebate'] = 0.0
 
     # Compute loss averages
     if epoch_metrics['n_ppo_updates'] > 0:
@@ -509,12 +651,14 @@ def train_epoch(
         epoch_metrics['avg_entropy'] = epoch_metrics['total_entropy'] / epoch_metrics['n_ppo_updates']
         epoch_metrics['avg_uncertainty'] = epoch_metrics['total_uncertainty'] / epoch_metrics['n_ppo_updates']
         epoch_metrics['avg_activity'] = epoch_metrics['total_activity'] / epoch_metrics['n_ppo_updates']
+        epoch_metrics['avg_turnover'] = epoch_metrics['total_turnover'] / epoch_metrics['n_ppo_updates']
     else:
         epoch_metrics['avg_policy_loss'] = 0.0
         epoch_metrics['avg_value_loss'] = 0.0
         epoch_metrics['avg_entropy'] = 0.0
         epoch_metrics['avg_uncertainty'] = 0.0
         epoch_metrics['avg_activity'] = 0.0
+        epoch_metrics['avg_turnover'] = 0.0
 
     return epoch_metrics
 
@@ -620,7 +764,11 @@ def validate_epoch(
         'episode_count': 0
     }
 
-    episode_returns = []
+    # Episode returns for Sharpe ratio calculation (different fee scenarios)
+    episode_returns_raw = []  # Baseline: Raw returns (no fees)
+    episode_returns_taker = []  # Taker fee 5 bps (market orders)
+    episode_returns_maker_neutral = []  # Maker fee 0 bps (limit orders)
+    episode_returns_maker_rebate = []  # Maker rebate -2.5 bps (limit orders)
     total_episodes = len(episodes)
 
     # Group episodes by parent_id for aggregated logging
@@ -630,7 +778,7 @@ def validate_epoch(
         'total_trades': 0, 'total_steps': 0,
         'sum_mean_pos': 0.0, 'max_pos': 0.0,
         'sum_mean_std': 0.0, 'min_std': float('inf'), 'max_std': float('-inf'),
-        'sum_gross_pnl_per_trade': 0.0, 'sum_tc_per_trade': 0.0
+        'sum_gross_pnl_per_trade': 0.0, 'sum_position_change_per_trade': 0.0
     })
 
     for ep_idx, episode in enumerate(episodes, 1):
@@ -645,7 +793,12 @@ def validate_epoch(
         val_metrics['total_reward'] += metrics['total_reward']
         val_metrics['total_pnl'] += metrics['total_pnl']
         val_metrics['episode_count'] += 1
-        episode_returns.append(metrics['total_reward'])
+
+        # Append RAW log returns for all fee scenarios (for Sharpe calculation - NOT volatility normalized)
+        episode_returns_raw.append(metrics['cumulative_raw_return_buyhold'])
+        episode_returns_taker.append(metrics['cumulative_raw_return_taker'])
+        episode_returns_maker_neutral.append(metrics['cumulative_raw_return_maker_neutral'])
+        episode_returns_maker_rebate.append(metrics['cumulative_raw_return_maker_rebate'])
 
         # Aggregate metrics by parent episode (day)
         parent_id = episode.parent_id if episode.parent_id is not None else ep_idx
@@ -661,7 +814,7 @@ def validate_epoch(
         dm['min_std'] = min(dm['min_std'], metrics['min_action_std'])
         dm['max_std'] = max(dm['max_std'], metrics['max_action_std'])
         dm['sum_gross_pnl_per_trade'] += metrics['avg_gross_pnl_per_trade']
-        dm['sum_tc_per_trade'] += metrics['avg_tc_per_trade']
+        dm['sum_position_change_per_trade'] += metrics['avg_position_change_per_trade']
 
         # Log when completing a parent episode (all chunks done)
         is_last_chunk = (ep_idx == total_episodes or
@@ -670,26 +823,93 @@ def validate_epoch(
         if is_last_chunk:
             from src.utils.logging import logger
             n_chunks = dm['chunks']
-            logger(f'    Day {len([k for k in day_metrics.keys() if day_metrics[k]["chunks"] > 0])}/{len(set(e.parent_id if e.parent_id is not None else i for i, e in enumerate(episodes, 1)))} '
-                   f'({n_chunks} chunks) - '
-                   f'Reward: {dm["total_reward"]:.4f}, '
-                   f'PnL: {dm["total_pnl"]:.4f}, '
-                   f'Trades: {dm["total_trades"]} ({dm["total_trades"]/dm["total_steps"]:.2%}), '
-                   f'Pos[μ={dm["sum_mean_pos"]/n_chunks:.4f}, max={dm["max_pos"]:.4f}], '
-                   f'Std[μ={dm["sum_mean_std"]/n_chunks:.4f}, range=[{dm["min_std"]:.4f},{dm["max_std"]:.4f}]], '
-                   f'Gross PnL/Trade: {dm["sum_gross_pnl_per_trade"]/n_chunks:.6f}, '
-                   f'TC/Trade: {dm["sum_tc_per_trade"]/n_chunks:.6f}, '
-                   f'Steps: {dm["total_steps"]}', "INFO")
+
+            # Calculate aggregated metrics
+            avg_position = dm['sum_mean_pos'] / n_chunks
+            avg_uncertainty = dm['sum_mean_std'] / n_chunks
+            avg_gross_pnl = dm['sum_gross_pnl_per_trade'] / n_chunks
+            avg_position_change = dm['sum_position_change_per_trade'] / n_chunks
+            trade_frequency = dm['total_trades'] / dm['total_steps']
+
+            # Compute TC for all fee scenarios from position change
+            taker_fee = 0.001  # 10 bps
+            maker_fee_neutral = 0.0  # 0 bps
+            maker_fee_rebate = -0.00025  # -2.5 bps (negative = rebate)
+
+            avg_tc_taker = taker_fee * avg_position_change
+            avg_tc_maker_neutral = maker_fee_neutral * avg_position_change
+            avg_tc_maker_rebate = maker_fee_rebate * avg_position_change
+
+            # Net PnL for each scenario
+            net_pnl_taker = avg_gross_pnl - avg_tc_taker
+            net_pnl_maker_neutral = avg_gross_pnl - avg_tc_maker_neutral
+            net_pnl_maker_rebate = avg_gross_pnl - avg_tc_maker_rebate
+
+            day_num = len([k for k in day_metrics.keys() if day_metrics[k]["chunks"] > 0])
+            total_days = len(set(e.parent_id if e.parent_id is not None else i for i, e in enumerate(episodes, 1)))
+
+            logger(f'    ┌─ Day {day_num}/{total_days} ({n_chunks} chunks, {dm["total_steps"]} steps)', "INFO")
+            logger(f'    │  Trading Activity: {dm["total_trades"]} trades ({trade_frequency:.1%} frequency)', "INFO")
+            logger(f'    │  Position Sizing: Mean={avg_position:.3f}, Max={dm["max_pos"]:.3f}', "INFO")
+            logger(f'    │  Action Uncertainty (σ): Mean={avg_uncertainty:.3f}, Range=[{dm["min_std"]:.3f}, {dm["max_std"]:.3f}]', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Performance (Market Orders - Taker Fee 10 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_taker:.8f}', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_taker:.8f} ({"PROFIT" if net_pnl_taker > 0 else "LOSS"})', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Alternative: Limit Orders (Maker Fee 0 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_maker_neutral:.8f}', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_maker_neutral:.8f} ({"PROFIT" if net_pnl_maker_neutral > 0 else "LOSS"})', "INFO")
+            logger(f'    │    Improvement:     {(net_pnl_maker_neutral - net_pnl_taker):.8f}', "INFO")
+            logger(f'    │', "INFO")
+            logger(f'    │  Alternative: Limit Orders (Maker Rebate -2.5 bps):', "INFO")
+            logger(f'    │    Gross PnL/Trade: {avg_gross_pnl:.8f}', "INFO")
+            logger(f'    │    TC/Trade:        {avg_tc_maker_rebate:.8f} (rebate)', "INFO")
+            logger(f'    │    Net PnL/Trade:   {net_pnl_maker_rebate:.8f} ({"PROFIT" if net_pnl_maker_rebate > 0 else "LOSS"})', "INFO")
+            logger(f'    │    Improvement:     {(net_pnl_maker_rebate - net_pnl_taker):.8f}', "INFO")
+            logger(f'    └─', "INFO")
 
     # Compute averages
     if val_metrics['episode_count'] > 0:
         val_metrics['avg_reward'] = val_metrics['total_reward'] / val_metrics['episode_count']
         val_metrics['avg_pnl'] = val_metrics['total_pnl'] / val_metrics['episode_count']
-        val_metrics['sharpe'] = compute_sharpe_ratio(episode_returns)
+
+        # Compute Sharpe ratios for all fee scenarios
+        val_metrics['sharpe_raw'] = compute_sharpe_ratio(episode_returns_raw)  # Baseline: no fees
+        val_metrics['sharpe_taker'] = compute_sharpe_ratio(episode_returns_taker)  # Taker 10 bps
+        val_metrics['sharpe_maker_neutral'] = compute_sharpe_ratio(episode_returns_maker_neutral)  # Maker 0 bps
+        val_metrics['sharpe_maker_rebate'] = compute_sharpe_ratio(episode_returns_maker_rebate)  # Maker -2.5 bps
+        val_metrics['sharpe'] = val_metrics['sharpe_taker']  # Legacy field (use taker for training - harder conditions)
+
+        # Compute mean return per scenario (Sharpe numerator - raw cumulative log-returns)
+        val_metrics['return_mean_raw'] = np.mean(episode_returns_raw)
+        val_metrics['return_mean_taker'] = np.mean(episode_returns_taker)
+        val_metrics['return_mean_maker_neutral'] = np.mean(episode_returns_maker_neutral)
+        val_metrics['return_mean_maker_rebate'] = np.mean(episode_returns_maker_rebate)
+
+        # Compute std return per scenario (Sharpe denominator)
+        val_metrics['return_std_raw'] = np.std(episode_returns_raw) if len(episode_returns_raw) > 1 else 0.0
+        val_metrics['return_std_taker'] = np.std(episode_returns_taker) if len(episode_returns_taker) > 1 else 0.0
+        val_metrics['return_std_maker_neutral'] = np.std(episode_returns_maker_neutral) if len(episode_returns_maker_neutral) > 1 else 0.0
+        val_metrics['return_std_maker_rebate'] = np.std(episode_returns_maker_rebate) if len(episode_returns_maker_rebate) > 1 else 0.0
     else:
         val_metrics['avg_reward'] = 0.0
         val_metrics['avg_pnl'] = 0.0
+        val_metrics['sharpe_raw'] = 0.0
+        val_metrics['sharpe_taker'] = 0.0
+        val_metrics['sharpe_maker_neutral'] = 0.0
+        val_metrics['sharpe_maker_rebate'] = 0.0
         val_metrics['sharpe'] = 0.0
+        val_metrics['return_mean_raw'] = 0.0
+        val_metrics['return_mean_taker'] = 0.0
+        val_metrics['return_mean_maker_neutral'] = 0.0
+        val_metrics['return_mean_maker_rebate'] = 0.0
+        val_metrics['return_std_raw'] = 0.0
+        val_metrics['return_std_taker'] = 0.0
+        val_metrics['return_std_maker_neutral'] = 0.0
+        val_metrics['return_std_maker_rebate'] = 0.0
 
     # Compute model metrics (losses, entropy, uncertainty, activity) on validation data
     model_metrics = compute_validation_metrics(
@@ -753,12 +973,38 @@ def train_split(
 
     # Learning rate scheduler - reduces LR when validation Sharpe plateaus
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.3, patience=2, min_lr=1e-6
+        optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-8
     )
 
     logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
-    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.3, patience=2)', "INFO")
-    logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, activity={config.ppo.activity_coef}', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.5, patience=5, min_lr=1e-8)', "INFO")
+    logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, turnover={config.ppo.turnover_coef}', "INFO")
+
+    # Setup CSV logging for epoch results
+    results_csv_path = LOG_DIR / f"split_{split_id}_epoch_results.csv"
+    csv_header = [
+        'epoch',
+        # Training metrics - all Sharpe scenarios (ONLY taker is optimized)
+        'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
+        'train_return_mean_buyhold', 'train_return_mean_taker', 'train_return_mean_maker_neutral', 'train_return_mean_maker_rebate',
+        'train_return_std_buyhold', 'train_return_std_taker', 'train_return_std_maker_neutral', 'train_return_std_maker_rebate',
+        'train_avg_reward', 'train_avg_pnl',
+        'train_policy_loss', 'train_value_loss', 'train_entropy',
+        'train_uncertainty', 'train_activity', 'train_turnover',
+        # Validation metrics - Sharpe scenarios (no loss/entropy metrics, no pnl_* columns)
+        'val_sharpe_buyhold', 'val_sharpe_taker', 'val_sharpe_maker_neutral', 'val_sharpe_maker_rebate',
+        'val_return_mean_buyhold', 'val_return_mean_taker', 'val_return_mean_maker_neutral', 'val_return_mean_maker_rebate',
+        'val_return_std_buyhold', 'val_return_std_taker', 'val_return_std_maker_neutral', 'val_return_std_maker_rebate',
+        'val_avg_reward', 'val_avg_pnl', 'val_activity',
+        'learning_rate'
+    ]
+
+    # Create CSV file with header
+    with open(results_csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(csv_header)
+
+    logger(f'Epoch results will be logged to: {results_csv_path}', "INFO")
 
     # Training loop
     metrics_logger = MetricsLogger(log_dir=str(LOG_DIR))
@@ -777,9 +1023,13 @@ def train_split(
             config.ppo, config.reward, config.model, experiment_type, device
         )
 
-        logger(f'  Train - Sharpe: {train_metrics["sharpe"]:.4f}, '
-               f'Avg Reward: {train_metrics["avg_reward"]:.4f}, '
+        logger(f'  Train - Avg Reward: {train_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
         logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
                f'Value: {train_metrics["avg_value_loss"]:.4f}, '
                f'Entropy: {train_metrics["avg_entropy"]:.4f}, '
@@ -791,14 +1041,13 @@ def train_split(
             agent, val_episodes, config.reward, config.model, config.ppo, experiment_type, device
         )
 
-        logger(f'  Val - Sharpe: {val_metrics["sharpe"]:.4f}, '
-               f'Avg Reward: {val_metrics["avg_reward"]:.4f}, '
+        logger(f'  Val - Avg Reward: {val_metrics["avg_reward"]:.4f}, '
                f'Avg PnL: {val_metrics["avg_pnl"]:.4f}', "INFO")
-        logger(f'  Losses - Policy: {val_metrics["policy_loss"]:.4f}, '
-               f'Value: {val_metrics["value_loss"]:.4f}, '
-               f'Entropy: {val_metrics["entropy"]:.4f}, '
-               f'Uncertainty: {val_metrics["uncertainty"]:.4f}, '
-               f'Activity: {val_metrics["activity"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {val_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {val_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {val_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {val_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
 
         # Update learning rate based on validation Sharpe
         scheduler.step(val_metrics["sharpe"])
@@ -823,6 +1072,51 @@ def train_split(
         mlflow.log_metric("val_uncertainty", val_metrics["uncertainty"], step=epoch)
         mlflow.log_metric("val_activity", val_metrics["activity"], step=epoch)
         mlflow.log_metric("learning_rate", current_lr, step=epoch)
+
+        # Log epoch results to CSV file
+        with open(results_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch + 1,  # Epoch number (1-indexed)
+                # Training - all Sharpe scenarios (ONLY taker is optimized)
+                train_metrics["sharpe_raw"],
+                train_metrics["sharpe_taker"],
+                train_metrics["sharpe_maker_neutral"],
+                train_metrics["sharpe_maker_rebate"],
+                train_metrics["return_mean_raw"],
+                train_metrics["return_mean_taker"],
+                train_metrics["return_mean_maker_neutral"],
+                train_metrics["return_mean_maker_rebate"],
+                train_metrics["return_std_raw"],
+                train_metrics["return_std_taker"],
+                train_metrics["return_std_maker_neutral"],
+                train_metrics["return_std_maker_rebate"],
+                train_metrics["avg_reward"],
+                train_metrics["avg_pnl"],
+                train_metrics["avg_policy_loss"],
+                train_metrics["avg_value_loss"],
+                train_metrics["avg_entropy"],
+                train_metrics["avg_uncertainty"],
+                train_metrics["avg_activity"],
+                train_metrics["avg_turnover"],
+                # Validation - Sharpe scenarios
+                val_metrics["sharpe_raw"],
+                val_metrics["sharpe_taker"],
+                val_metrics["sharpe_maker_neutral"],
+                val_metrics["sharpe_maker_rebate"],
+                val_metrics["return_mean_raw"],
+                val_metrics["return_mean_taker"],
+                val_metrics["return_mean_maker_neutral"],
+                val_metrics["return_mean_maker_rebate"],
+                val_metrics["return_std_raw"],
+                val_metrics["return_std_taker"],
+                val_metrics["return_std_maker_neutral"],
+                val_metrics["return_std_maker_rebate"],
+                val_metrics["avg_reward"],
+                val_metrics["avg_pnl"],
+                val_metrics["activity"],
+                current_lr
+            ])
 
         # Save checkpoint if best
         if val_metrics["sharpe"] > best_val_sharpe:
@@ -853,6 +1147,237 @@ def train_split(
     }
 
 
+def train_test_mode(
+    test_split: int,
+    config: ExperimentConfig,
+    device: torch.device
+):
+    """
+    Train PPO agent on full test_split (train+val combined) and evaluate on test_data.
+
+    NOTE: This function requires modifications to EpisodeLoader in src.ppo:
+      1. load_episodes(split_id, role=None) should load all roles when role=None
+      2. load_test_episodes() method should load from 'test_data' collection
+
+    Args:
+        test_split: Split ID to use for training (all roles combined)
+        config: Experiment configuration
+        device: Training device
+
+    Returns:
+        Dictionary with test results
+    """
+    logger('', "INFO")
+    logger(f'Training agent on full split_{test_split} (train+val combined)...', "INFO")
+    logger('Will evaluate on test_data collection', "INFO")
+
+    # Get experiment type from config
+    experiment_type = config.data.experiment_type
+
+    # Initialize episode loader
+    data_config = config.data
+    data_config.split_ids = [test_split]
+
+    episode_loader = EpisodeLoader(data_config, episode_chunk_size=EPISODE_CHUNK_SIZE)
+
+    # Load ALL episodes from test_split (no role filter - both train and val)
+    logger('Loading training episodes (full split - train+val combined)...', "INFO")
+    train_episodes = episode_loader.load_episodes(test_split, role=None)  # None = all roles
+    logger(f'  Loaded {len(train_episodes)} training episodes from full split_{test_split}', "INFO")
+
+    # Load test episodes from test_data collection
+    logger('Loading test episodes from test_data...', "INFO")
+    test_episodes = episode_loader.load_test_episodes()  # Special method for test_data
+    logger(f'  Loaded {len(test_episodes)} test episodes', "INFO")
+
+    # Initialize agent based on experiment type
+    logger(f'Initializing agent for Experiment {experiment_type.value}...', "INFO")
+    if experiment_type == ExperimentType.EXP1_BOTH_ORIGINAL:
+        agent = ActorCriticTransformer(config.model).to(device)
+    elif experiment_type == ExperimentType.EXP2_FEATURES_ORIGINAL:
+        agent = ActorCriticFeatures(config.model).to(device)
+    else:  # EXP3_CODEBOOK_ORIGINAL
+        agent = ActorCriticCodebook(config.model).to(device)
+
+    optimizer = optim.Adam(
+        agent.parameters(),
+        lr=config.ppo.learning_rate,
+        weight_decay=config.ppo.weight_decay
+    )
+
+    # Learning rate scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-8
+    )
+
+    logger(f'Agent initialized: {agent.count_parameters():,} parameters', "INFO")
+    logger(f'Learning rate scheduler: ReduceLROnPlateau (factor=0.5, patience=5, min_lr=1e-8)', "INFO")
+    logger(f'Loss coefficients: entropy={config.ppo.entropy_coef}, uncertainty={config.ppo.uncertainty_coef}, turnover={config.ppo.turnover_coef}', "INFO")
+
+    # Setup CSV logging for epoch results
+    results_csv_path = LOG_DIR / f"test_split_{test_split}_epoch_results.csv"
+    csv_header = [
+        'epoch',
+        # Training metrics (full split) - ONLY taker is optimized
+        'train_sharpe_buyhold', 'train_sharpe_taker', 'train_sharpe_maker_neutral', 'train_sharpe_maker_rebate',
+        'train_return_mean_buyhold', 'train_return_mean_taker', 'train_return_mean_maker_neutral', 'train_return_mean_maker_rebate',
+        'train_return_std_buyhold', 'train_return_std_taker', 'train_return_std_maker_neutral', 'train_return_std_maker_rebate',
+        'train_avg_reward', 'train_avg_pnl',
+        'train_policy_loss', 'train_value_loss', 'train_entropy',
+        'train_uncertainty', 'train_activity', 'train_turnover',
+        # Test metrics (test_data) - Sharpe scenarios (no pnl_* columns)
+        'test_sharpe_buyhold', 'test_sharpe_taker', 'test_sharpe_maker_neutral', 'test_sharpe_maker_rebate',
+        'test_return_mean_buyhold', 'test_return_mean_taker', 'test_return_mean_maker_neutral', 'test_return_mean_maker_rebate',
+        'test_return_std_buyhold', 'test_return_std_taker', 'test_return_std_maker_neutral', 'test_return_std_maker_rebate',
+        'test_avg_reward', 'test_avg_pnl', 'test_activity',
+        'learning_rate'
+    ]
+
+    # Create CSV file with header
+    with open(results_csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(csv_header)
+
+    logger(f'Epoch results will be logged to: {results_csv_path}', "INFO")
+
+    # Training loop
+    metrics_logger = MetricsLogger(log_dir=str(LOG_DIR))
+    best_test_sharpe = float('-inf')
+    patience_counter = 0
+
+    for epoch in range(config.training.max_epochs):
+        epoch_start = time.time()
+
+        logger('', "INFO")
+        logger(f'Epoch {epoch + 1}/{config.training.max_epochs}', "INFO")
+
+        # Training on full split
+        train_metrics = train_epoch(
+            agent, optimizer, train_episodes,
+            config.ppo, config.reward, config.model, experiment_type, device
+        )
+
+        logger(f'  Train (Full Split) - Avg Reward: {train_metrics["avg_reward"]:.4f}, '
+               f'Avg PnL: {train_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {train_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {train_metrics["sharpe_maker_neutral"]:.4f}', "INFO")
+        logger(f'      Taker (5 bps):            {train_metrics["sharpe_taker"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {train_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+        logger(f'  Losses - Policy: {train_metrics["avg_policy_loss"]:.4f}, '
+               f'Value: {train_metrics["avg_value_loss"]:.4f}, '
+               f'Entropy: {train_metrics["avg_entropy"]:.4f}, '
+               f'Uncertainty: {train_metrics["avg_uncertainty"]:.4f}, '
+               f'Activity: {train_metrics["avg_activity"]:.4f}', "INFO")
+
+        # Test evaluation (every epoch)
+        test_metrics = validate_epoch(
+            agent, test_episodes, config.reward, config.model, config.ppo, experiment_type, device
+        )
+
+        logger(f'  Test (test_data) - Avg Reward: {test_metrics["avg_reward"]:.4f}, '
+               f'Avg PnL: {test_metrics["avg_pnl"]:.4f}', "INFO")
+        logger(f'    Sharpe Ratios:', "INFO")
+        logger(f'      Buy-and-Hold (baseline):  {test_metrics["sharpe_raw"]:.4f}', "INFO")
+        logger(f'      Maker (0 bps):            {test_metrics["sharpe_maker_neutral"]:.4f}  [TRAINING SCENARIO]', "INFO")
+        logger(f'      Taker (5 bps):            {test_metrics["sharpe_taker"]:.4f}', "INFO")
+        logger(f'      Maker Rebate (-2.5 bps):  {test_metrics["sharpe_maker_rebate"]:.4f}', "INFO")
+
+        # Update learning rate based on test Sharpe
+        scheduler.step(test_metrics["sharpe"])
+        current_lr = optimizer.param_groups[0]['lr']
+        logger(f'  Learning rate: {current_lr:.6f}', "INFO")
+
+        # Log to MLflow
+        mlflow.log_metric("train_sharpe", train_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("train_sharpe_buyhold", train_metrics["sharpe_raw"], step=epoch)
+        mlflow.log_metric("train_sharpe_taker", train_metrics["sharpe_taker"], step=epoch)
+        mlflow.log_metric("train_sharpe_maker_neutral", train_metrics["sharpe_maker_neutral"], step=epoch)
+        mlflow.log_metric("train_sharpe_maker_rebate", train_metrics["sharpe_maker_rebate"], step=epoch)
+        mlflow.log_metric("train_avg_reward", train_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("train_avg_pnl", train_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("train_policy_loss", train_metrics["avg_policy_loss"], step=epoch)
+        mlflow.log_metric("train_value_loss", train_metrics["avg_value_loss"], step=epoch)
+        mlflow.log_metric("train_entropy", train_metrics["avg_entropy"], step=epoch)
+        mlflow.log_metric("train_uncertainty", train_metrics["avg_uncertainty"], step=epoch)
+        mlflow.log_metric("train_activity", train_metrics["avg_activity"], step=epoch)
+
+        mlflow.log_metric("test_sharpe", test_metrics["sharpe"], step=epoch)
+        mlflow.log_metric("test_sharpe_buyhold", test_metrics["sharpe_raw"], step=epoch)
+        mlflow.log_metric("test_sharpe_taker", test_metrics["sharpe_taker"], step=epoch)
+        mlflow.log_metric("test_sharpe_maker_neutral", test_metrics["sharpe_maker_neutral"], step=epoch)
+        mlflow.log_metric("test_sharpe_maker_rebate", test_metrics["sharpe_maker_rebate"], step=epoch)
+        mlflow.log_metric("test_avg_reward", test_metrics["avg_reward"], step=epoch)
+        mlflow.log_metric("test_avg_pnl", test_metrics["avg_pnl"], step=epoch)
+        mlflow.log_metric("test_policy_loss", test_metrics["policy_loss"], step=epoch)
+        mlflow.log_metric("test_value_loss", test_metrics["value_loss"], step=epoch)
+        mlflow.log_metric("test_entropy", test_metrics["entropy"], step=epoch)
+        mlflow.log_metric("test_uncertainty", test_metrics["uncertainty"], step=epoch)
+        mlflow.log_metric("test_activity", test_metrics["activity"], step=epoch)
+        mlflow.log_metric("learning_rate", current_lr, step=epoch)
+
+        # Log epoch results to CSV file
+        with open(results_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                epoch + 1,
+                # Training metrics (ONLY taker is optimized)
+                train_metrics["sharpe_raw"], train_metrics["sharpe_taker"],
+                train_metrics["sharpe_maker_neutral"], train_metrics["sharpe_maker_rebate"],
+                train_metrics["return_mean_raw"], train_metrics["return_mean_taker"],
+                train_metrics["return_mean_maker_neutral"], train_metrics["return_mean_maker_rebate"],
+                train_metrics["return_std_raw"], train_metrics["return_std_taker"],
+                train_metrics["return_std_maker_neutral"], train_metrics["return_std_maker_rebate"],
+                train_metrics["avg_reward"], train_metrics["avg_pnl"],
+                train_metrics["avg_policy_loss"], train_metrics["avg_value_loss"],
+                train_metrics["avg_entropy"], train_metrics["avg_uncertainty"],
+                train_metrics["avg_activity"], train_metrics["avg_turnover"],
+                # Test metrics - Sharpe scenarios
+                test_metrics["sharpe_raw"], test_metrics["sharpe_taker"],
+                test_metrics["sharpe_maker_neutral"], test_metrics["sharpe_maker_rebate"],
+                test_metrics["return_mean_raw"], test_metrics["return_mean_taker"],
+                test_metrics["return_mean_maker_neutral"], test_metrics["return_mean_maker_rebate"],
+                test_metrics["return_std_raw"], test_metrics["return_std_taker"],
+                test_metrics["return_std_maker_neutral"], test_metrics["return_std_maker_rebate"],
+                test_metrics["avg_reward"], test_metrics["avg_pnl"],
+                test_metrics["activity"],
+                current_lr
+            ])
+
+        # Check for improvement
+        if test_metrics["sharpe"] > best_test_sharpe:
+            best_test_sharpe = test_metrics["sharpe"]
+            patience_counter = 0
+
+            # Save best model
+            save_checkpoint(
+                agent, optimizer, epoch, test_split, test_metrics["sharpe"],
+                checkpoint_dir=str(CHECKPOINT_DIR)
+            )
+            logger(f'  ✓ New best model saved (Test Sharpe: {best_test_sharpe:.4f})', "INFO")
+        else:
+            patience_counter += 1
+
+        # Early stopping
+        if patience_counter >= config.training.patience:
+            logger(f'  Early stopping triggered (patience: {config.training.patience})', "INFO")
+            break
+
+        epoch_time = time.time() - epoch_start
+        logger(f'  Epoch time: {epoch_time:.2f}s', "INFO")
+
+    episode_loader.close()
+
+    return {
+        'best_test_sharpe': best_test_sharpe,
+        'best_test_sharpe_buyhold': test_metrics["sharpe_raw"],
+        'best_test_sharpe_taker': test_metrics["sharpe_taker"],
+        'best_test_sharpe_maker_neutral': test_metrics["sharpe_maker_neutral"],
+        'best_test_sharpe_maker_rebate': test_metrics["sharpe_maker_rebate"],
+        'epochs_trained': epoch + 1
+    }
+
+
 # =================================================================================================
 # Main Execution
 # =================================================================================================
@@ -861,17 +1386,24 @@ def main():
     """Main execution function."""
     import argparse
 
+    # Allow modification of global directory variables for parallel execution
+    global CHECKPOINT_DIR, LOG_DIR
+
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='PPO Agent Training with Different Experiments')
-    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3],
+    parser = argparse.ArgumentParser(description='PPO Agent Training (Stage 21) with Train/Test Modes')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                        help='Pipeline mode: train (CPCV on splits) or test (full split + test_data eval)')
+    parser.add_argument('--test-split', type=int, default=0,
+                        help='[TEST MODE] Split ID to use for full training (default: 0)')
+    parser.add_argument('--experiment', type=int, default=None, choices=[1, 2, 3, 4],
                         help='Experiment type: 1=Both sources (original), 2=Features only (original), '
-                             '3=Codebook only (original). '
-                             'If not specified, runs all 3 experiments sequentially.')
+                             '3=Codebook only (original), 4=Codebook (synthetic). '
+                             'If not specified, runs all experiments sequentially.')
     parser.add_argument('--splits', type=str, default=None,
-                        help='Comma-separated list of split IDs to train (e.g., "0,1,2"). '
+                        help='[TRAIN MODE] Comma-separated list of split IDs to train (e.g., "0,1,2"). '
                              'If not specified, trains on all available splits.')
     parser.add_argument('--max-splits', type=int, default=None,
-                        help='Maximum number of splits to train on (uses first N splits). '
+                        help='[TRAIN MODE] Maximum number of splits to train on (uses first N splits). '
                              'Useful for quick testing.')
     args = parser.parse_args()
 
@@ -879,14 +1411,15 @@ def main():
     if args.experiment is not None:
         experiments_to_run = [args.experiment]
     else:
-        # Run all 3 experiments by default
-        experiments_to_run = [1, 2, 3]
+        # Run all experiments by default (including synthetic)
+        experiments_to_run = [1, 2, 3, 4]
 
     # Map experiment number to enum
     experiment_mapping = {
         1: ExperimentType.EXP1_BOTH_ORIGINAL,
         2: ExperimentType.EXP2_FEATURES_ORIGINAL,
-        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL
+        3: ExperimentType.EXP3_CODEBOOK_ORIGINAL,
+        4: ExperimentType.EXP4_SYNTHETIC_BINS
     }
 
     # Setup device
@@ -928,14 +1461,34 @@ def main():
     # Setup MLflow
     logger('', "INFO")
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+    # Adjust experiment name and artifact directory based on mode
+    if args.mode == 'test':
+        experiment_name = f"{MLFLOW_EXPERIMENT_NAME}_Test"
+        artifact_base_dir = ARTIFACT_BASE_DIR.parent / "test"
+        logger('', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'PPO TRAINING - TEST MODE (STAGE 21)', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'Training on full split_{args.test_split} (train+val combined)', "INFO")
+        logger(f'Evaluating on test_data collection', "INFO")
+        logger('', "INFO")
+    else:
+        experiment_name = MLFLOW_EXPERIMENT_NAME
+        artifact_base_dir = ARTIFACT_BASE_DIR
+        logger('', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'PPO TRAINING - TRAIN MODE (STAGE 21)', "INFO")
+        logger('=' * 100, "INFO")
+        logger(f'Using CPCV on {len(split_ids)} splits', "INFO")
+        logger('', "INFO")
+
+    mlflow.set_experiment(experiment_name)
     logger(f'MLflow tracking URI: {MLFLOW_TRACKING_URI}', "INFO")
-    logger(f'MLflow experiment: {MLFLOW_EXPERIMENT_NAME}', "INFO")
+    logger(f'MLflow experiment: {experiment_name}', "INFO")
 
     # Create artifact directories
-    ARTIFACT_BASE_DIR.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    artifact_base_dir.mkdir(parents=True, exist_ok=True)
 
     # Run each experiment
     for exp_num in experiments_to_run:
@@ -943,11 +1496,21 @@ def main():
 
         logger('', "INFO")
         logger('=' * 100, "INFO")
-        logger(f'PPO AGENT TRAINING - EXPERIMENT {exp_num} (STAGE 18)', "INFO")
+        logger(f'PPO AGENT TRAINING - EXPERIMENT {exp_num} (STAGE 21)', "INFO")
         logger('=' * 100, "INFO")
         logger(f'Experiment: {selected_experiment.name}', "INFO")
 
-        # Create experiment config with selected experiment type
+        # Create experiment-specific directories
+        exp_artifact_dir = artifact_base_dir / f"experiment_{exp_num}"
+        CHECKPOINT_DIR = exp_artifact_dir / "checkpoints"
+        LOG_DIR = exp_artifact_dir / "logs"
+
+        # Create directories
+        exp_artifact_dir.mkdir(parents=True, exist_ok=True)
+        CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Create experiment config
         config = ExperimentConfig(
             name=f"ppo_exp{exp_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             model=ModelConfig(window_size=WINDOW_SIZE, horizon=HORIZON),
@@ -956,14 +1519,12 @@ def main():
             training=TrainingConfig(device=str(device)),
             data=DataConfig(
                 database_name=DB_NAME,
-                split_ids=split_ids,
+                split_ids=split_ids if args.mode == 'train' else [args.test_split],
                 experiment_type=selected_experiment
             )
         )
 
         # Save config
-        exp_artifact_dir = ARTIFACT_BASE_DIR / f"experiment_{exp_num}"
-        exp_artifact_dir.mkdir(parents=True, exist_ok=True)
         config_path = exp_artifact_dir / "experiment_config.json"
         config.save(str(config_path))
         logger(f'Experiment config saved to: {config_path}', "INFO")
@@ -973,20 +1534,23 @@ def main():
         logger('Training Configuration:', "INFO")
         logger(f'  Max epochs: {config.training.max_epochs}', "INFO")
         logger(f'  Episodes per epoch: ALL (no limit)', "INFO")
-        logger(f'  Splits to train: {len(split_ids)}', "INFO")
+        if args.mode == 'train':
+            logger(f'  Splits to train: {len(split_ids)}', "INFO")
+        else:
+            logger(f'  Training on: full split_{args.test_split} (train+val combined)', "INFO")
+            logger(f'  Evaluating on: test_data collection', "INFO")
         logger(f'  Early stopping patience: {config.training.patience} epochs', "INFO")
 
-        # Estimate training time (assuming ~40 train episodes per split, ~30s per episode)
-        # Each epoch processes ALL training episodes
-        # Early stopping (patience=3) will likely stop around epoch 5-7
-        estimated_episodes_per_split = 40  # typical 80% of ~50 total episodes
-        estimated_time_per_epoch = (estimated_episodes_per_split * 30) / 3600  # hours
-        estimated_time_per_split_max = config.training.max_epochs * estimated_time_per_epoch
-        estimated_time_per_split_typical = 5 * estimated_time_per_epoch  # with early stopping
-        total_estimated_time_max = estimated_time_per_split_max * len(split_ids)
-        total_estimated_time_typical = estimated_time_per_split_typical * len(split_ids)
-        logger(f'  Estimated time per split: ~{estimated_time_per_split_typical:.1f}h (typical) to {estimated_time_per_split_max:.1f}h (max)', "INFO")
-        logger(f'  Total estimated time: ~{total_estimated_time_typical:.1f}h (typical) to {total_estimated_time_max:.1f}h (max)', "INFO")
+        if args.mode == 'train':
+            # Estimate training time for train mode
+            estimated_episodes_per_split = 40  # typical 80% of ~50 total episodes
+            estimated_time_per_epoch = (estimated_episodes_per_split * 30) / 3600  # hours
+            estimated_time_per_split_max = config.training.max_epochs * estimated_time_per_epoch
+            estimated_time_per_split_typical = 5 * estimated_time_per_epoch  # with early stopping
+            total_estimated_time_max = estimated_time_per_split_max * len(split_ids)
+            total_estimated_time_typical = estimated_time_per_split_typical * len(split_ids)
+            logger(f'  Estimated time per split: ~{estimated_time_per_split_typical:.1f}h (typical) to {estimated_time_per_split_max:.1f}h (max)', "INFO")
+            logger(f'  Total estimated time: ~{total_estimated_time_typical:.1f}h (typical) to {total_estimated_time_max:.1f}h (max)', "INFO")
 
         # Main training loop for this experiment
         with mlflow.start_run(run_name=config.name):
@@ -994,49 +1558,89 @@ def main():
             mlflow.log_params(config.to_dict())
             mlflow.log_artifact(str(config_path))
 
-            # Train on each split
-            all_results = {}
+            if args.mode == 'train':
+                # TRAIN MODE: CPCV training on splits
+                all_results = {}
 
-            for split_id in split_ids:
+                for split_id in split_ids:
+                    logger('', "INFO")
+                    logger('=' * 100, "INFO")
+                    logger(f'SPLIT {split_id}', "INFO")
+                    logger('=' * 100, "INFO")
+
+                    with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
+                        mlflow.log_param("split_id", split_id)
+                        mlflow.log_param("experiment_type", exp_num)
+                        mlflow.log_param("mode", "train")
+
+                        results = train_split(split_id, config, device)
+                        all_results[split_id] = results
+
+                        mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
+                        mlflow.log_metric("epochs_trained", results['epochs_trained'])
+
+                        logger('', "INFO")
+                        logger(f'Split {split_id} complete:', "INFO")
+                        logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
+                        logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
+
+                # Summary for this experiment
                 logger('', "INFO")
                 logger('=' * 100, "INFO")
-                logger(f'SPLIT {split_id}', "INFO")
+                logger(f'EXPERIMENT {exp_num} COMPLETE (TRAIN MODE)', "INFO")
                 logger('=' * 100, "INFO")
 
-                with mlflow.start_run(run_name=f"split_{split_id}", nested=True):
-                    mlflow.log_param("split_id", split_id)
-                    mlflow.log_param("experiment_type", exp_num)
+                avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
+                logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
+                logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
 
-                    results = train_split(split_id, config, device)
-                    all_results[split_id] = results
+                mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
 
-                    mlflow.log_metric("best_val_sharpe", results['best_val_sharpe'])
-                    mlflow.log_metric("epochs_trained", results['epochs_trained'])
+            else:
+                # TEST MODE: Train on full split, evaluate on test_data
+                logger('', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'TEST SPLIT {args.test_split} (FULL)', "INFO")
+                logger('=' * 100, "INFO")
 
-                    logger('', "INFO")
-                    logger(f'Split {split_id} complete:', "INFO")
-                    logger(f'  Best validation Sharpe: {results["best_val_sharpe"]:.4f}', "INFO")
-                    logger(f'  Epochs trained: {results["epochs_trained"]}', "INFO")
+                mlflow.log_param("test_split", args.test_split)
+                mlflow.log_param("experiment_type", exp_num)
+                mlflow.log_param("mode", "test")
 
-            # Summary for this experiment
-            logger('', "INFO")
-            logger('=' * 100, "INFO")
-            logger(f'EXPERIMENT {exp_num} COMPLETE', "INFO")
-            logger('=' * 100, "INFO")
+                results = train_test_mode(args.test_split, config, device)
 
-            avg_sharpe = np.mean([r['best_val_sharpe'] for r in all_results.values()])
-            logger(f'Average validation Sharpe across splits: {avg_sharpe:.4f}', "INFO")
-            logger(f'Checkpoints saved to: {CHECKPOINT_DIR}', "INFO")
+                # Log test metrics
+                mlflow.log_metric("best_test_sharpe", results['best_test_sharpe'])
+                mlflow.log_metric("best_test_sharpe_buyhold", results['best_test_sharpe_buyhold'])
+                mlflow.log_metric("best_test_sharpe_taker", results['best_test_sharpe_taker'])
+                mlflow.log_metric("best_test_sharpe_maker_neutral", results['best_test_sharpe_maker_neutral'])
+                mlflow.log_metric("best_test_sharpe_maker_rebate", results['best_test_sharpe_maker_rebate'])
+                mlflow.log_metric("epochs_trained", results['epochs_trained'])
 
-            mlflow.log_metric("avg_val_sharpe_across_splits", avg_sharpe)
+                # Summary
+                logger('', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'EXPERIMENT {exp_num} COMPLETE (TEST MODE)', "INFO")
+                logger('=' * 100, "INFO")
+                logger(f'Test Sharpe Ratios (best epoch):', "INFO")
+                logger(f'  Buy-and-Hold (baseline):  {results["best_test_sharpe_buyhold"]:.4f}', "INFO")
+                logger(f'  Taker (5 bps):            {results["best_test_sharpe_taker"]:.4f}', "INFO")
+                logger(f'  Maker (0 bps):            {results["best_test_sharpe_maker_neutral"]:.4f}', "INFO")
+                logger(f'  Maker Rebate (-2.5 bps):  {results["best_test_sharpe_maker_rebate"]:.4f}', "INFO")
+                logger(f'Epochs trained: {results["epochs_trained"]}', "INFO")
+                logger(f'Model saved to: {CHECKPOINT_DIR}', "INFO")
 
     # Final summary
     logger('', "INFO")
     logger('=' * 100, "INFO")
-    logger('ALL EXPERIMENTS COMPLETE', "INFO")
+    logger(f'ALL EXPERIMENTS COMPLETE ({args.mode.upper()} MODE)', "INFO")
     logger('=' * 100, "INFO")
     logger(f'Completed {len(experiments_to_run)} experiment(s)', "INFO")
     logger(f'MLflow tracking: {MLFLOW_TRACKING_URI}', "INFO")
+    if args.mode == 'test':
+        logger(f'Test results saved to: {artifact_base_dir}', "INFO")
+    else:
+        logger(f'Training results saved to: {artifact_base_dir}', "INFO")
 
 
 if __name__ == "__main__":
@@ -1055,7 +1659,7 @@ if __name__ == "__main__":
 
         logger('', "INFO")
         logger(f'Total execution time: {hours}h {minutes}m {seconds}s', "INFO")
-        logger('Stage 17 completed successfully', "INFO")
+        logger('Stage 21 completed successfully', "INFO")
 
     except Exception as e:
         logger(f'ERROR: {str(e)}', "ERROR")

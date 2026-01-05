@@ -1,8 +1,10 @@
 """
-Null Filtering Script (Stage 11.5)
+Null Filtering Script (Stage 14)
 
-Removes documents with null values from standardized split collections.
-Runs after Stage 11 (feature standardization) and before Stage 12 (VQ-VAE).
+Removes documents with null values from standardized collections.
+
+TRAIN MODE: Filters split_X_input collections
+TEST MODE: Filters test_data collection
 
 Processing Strategy:
 - Loads data in hourly batches (same as all other stages)
@@ -13,12 +15,14 @@ This ensures the modeling pipeline receives only clean, complete samples
 without any null/NaN/Inf values in the features array.
 
 Usage:
-    python scripts/11.5_filter_nulls.py
+    TRAIN: python scripts/12_filter_nulls.py --mode train
+    TEST:  python scripts/12_filter_nulls.py --mode test
 """
 
 import sys
 import os
 import time
+import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List
@@ -374,76 +378,296 @@ def filter_split_nulls_hourly(
     }
 
 
+def filter_test_data_nulls_hourly(
+    spark: SparkSession,
+    db_name: str,
+    collection_name: str = 'test_data'
+):
+    """
+    Filter nulls from test_data collection using hourly batch processing.
+
+    Same logic as filter_split_nulls_hourly but for test_data collection.
+
+    Args:
+        spark: SparkSession
+        db_name: Database name
+        collection_name: Collection to filter (default: 'test_data')
+    """
+    temp_collection = f"{collection_name}_temp"
+
+    log_section(f'FILTERING NULLS - {collection_name.upper()}')
+    logger(f'Source Collection: {collection_name}', "INFO")
+    logger(f'Temp Collection: {temp_collection}', "INFO")
+    logger('', "INFO")
+
+    # Get all hours in chronological order
+    all_hours = get_all_hours(spark, db_name, collection_name)
+
+    if not all_hours:
+        logger('No data found in collection, skipping', "WARNING")
+        return {
+            'initial_count': 0,
+            'final_count': 0,
+            'removed_count': 0,
+            'removal_pct': 0.0
+        }
+
+    logger(f'Processing {len(all_hours)} hours in chronological order', "INFO")
+    logger('', "INFO")
+
+    # Statistics tracking
+    total_processed = 0
+    total_filtered = 0
+    total_removed = 0
+    total_duplicates = 0
+
+    first_batch = True
+
+    # Process each hour sequentially
+    for hour_idx, start_hour in enumerate(all_hours):
+        hour_start_time = time.time()
+        end_hour = start_hour + timedelta(hours=1)
+
+        # Load hour batch
+        hour_df = load_hour_batch(
+            spark,
+            db_name,
+            collection_name,
+            start_hour,
+            end_hour
+        )
+
+        hour_count = hour_df.count()
+
+        if hour_count == 0:
+            if (hour_idx + 1) % 10 == 0 or (hour_idx + 1) == len(all_hours):
+                logger(f'  Hour {hour_idx + 1}/{len(all_hours)} '
+                       f'({start_hour.strftime("%Y-%m-%d %H:%M")}): '
+                       f'Empty batch, skipping', "INFO")
+            continue
+
+        # Filter documents without nulls using native Spark SQL
+        clean_df = hour_df.filter(
+            ~expr("""
+                features IS NULL OR
+                exists(features, x -> x IS NULL OR isnan(x) OR x = double('inf') OR x = double('-inf'))
+            """)
+        )
+
+        # Remove duplicate timestamps
+        before_dedup = clean_df.count()
+        clean_df = clean_df.dropDuplicates(["timestamp"])
+        after_dedup = clean_df.count()
+        duplicates_removed = before_dedup - after_dedup
+
+        clean_count = after_dedup
+        removed_in_hour = hour_count - clean_count
+
+        total_processed += hour_count
+        total_filtered += clean_count
+        total_removed += removed_in_hour
+        total_duplicates += duplicates_removed
+
+        # Write clean data to temporary collection
+        if clean_count > 0:
+            # Drop _id to avoid conflicts
+            if '_id' in clean_df.columns:
+                clean_df = clean_df.drop('_id')
+
+            # Ensure timestamp ordering
+            clean_df = clean_df.orderBy("timestamp")
+
+            # Write with append mode after first batch
+            write_mode = "overwrite" if first_batch else "append"
+
+            (clean_df.write.format("mongodb")
+             .option("database", db_name)
+             .option("collection", temp_collection)
+             .option("ordered", "true")
+             .mode(write_mode)
+             .save())
+
+            first_batch = False
+
+        hour_duration = time.time() - hour_start_time
+
+        # Log progress every 10 hours or at the end
+        if (hour_idx + 1) % 10 == 0 or (hour_idx + 1) == len(all_hours):
+            duplicate_msg = f', {duplicates_removed:,} duplicates' if duplicates_removed > 0 else ''
+            logger(f'  Hour {hour_idx + 1}/{len(all_hours)} '
+                   f'({start_hour.strftime("%Y-%m-%d %H:%M")}): '
+                   f'{hour_count:,} docs → {clean_count:,} clean '
+                   f'({removed_in_hour:,} removed{duplicate_msg}) in {hour_duration:.2f}s',
+                   "INFO")
+
+    # Calculate statistics
+    removal_pct = (total_removed / total_processed * 100) if total_processed > 0 else 0.0
+
+    logger('', "INFO")
+    logger(f'{collection_name} Filtering Complete:', "INFO")
+    logger(f'  Total processed: {total_processed:,} documents', "INFO")
+    logger(f'  Clean documents: {total_filtered:,}', "INFO")
+    logger(f'  Removed documents: {total_removed:,} ({removal_pct:.2f}%)', "INFO")
+    if total_duplicates > 0:
+        logger(f'  Duplicate timestamps removed: {total_duplicates:,}', "INFO")
+
+    # Replace original collection with filtered data
+    if total_removed > 0:
+        logger('', "INFO")
+        logger('Replacing original collection with filtered data...', "INFO")
+
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = client[db_name]
+
+        # Drop original collection
+        db[collection_name].drop()
+        logger(f'  Dropped {collection_name}', "INFO")
+
+        # Rename temp collection to original name
+        db[temp_collection].rename(collection_name)
+        logger(f'  Renamed {temp_collection} → {collection_name}', "INFO")
+
+        client.close()
+
+        logger('Collection replacement complete', "INFO")
+    else:
+        logger('', "INFO")
+        logger('No nulls found - original collection unchanged', "INFO")
+
+        # Clean up temp collection if it exists
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = client[db_name]
+        if temp_collection in db.list_collection_names():
+            db[temp_collection].drop()
+        client.close()
+
+    logger('', "INFO")
+
+    return {
+        'initial_count': total_processed,
+        'final_count': total_filtered,
+        'removed_count': total_removed,
+        'removal_pct': removal_pct
+    }
+
+
 # =================================================================================================
 # Main Execution
 # =================================================================================================
 
 def main():
     """Main execution function."""
-    log_section('NULL FILTERING (STAGE 11.5)')
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Filter null values from collections')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                        help='Pipeline mode: train (filter split_X) or test (filter test_data)')
+    args = parser.parse_args()
+
+    mode = args.mode
+
+    log_section(f'NULL FILTERING (STAGE 14) - {mode.upper()} MODE')
     logger('', "INFO")
-    
-    logger('This stage removes documents with null/NaN/Inf values from standardized splits', "INFO")
+
+    if mode == 'train':
+        logger('This stage removes documents with null/NaN/Inf values from split collections', "INFO")
+    else:
+        logger('This stage removes documents with null/NaN/Inf values from test_data collection', "INFO")
+
     logger(f'Database: {DB_NAME}', "INFO")
-
-    # Discover all split collections
-    from pymongo import MongoClient
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    db = client[DB_NAME]
-    all_collections = db.list_collection_names()
-
-    # Extract split IDs from collection names matching pattern
-    import re
-    split_pattern = re.compile(rf'^{COLLECTION_PREFIX}(\d+){COLLECTION_SUFFIX}$')
-    split_ids = []
-    for coll_name in all_collections:
-        match = split_pattern.match(coll_name)
-        if match:
-            split_ids.append(int(match.group(1)))
-    split_ids = sorted(split_ids)
-    client.close()
-
-    if not split_ids:
-        logger('No split collections found!', "ERROR")
-        return
-
-    logger(f'Found {len(split_ids)} split collections: {split_ids}', "INFO")
-    logger(f'Collections: {COLLECTION_PREFIX}{{0-{split_ids[-1]}}}{COLLECTION_SUFFIX}', "INFO")
-    logger(f'Processing {len(split_ids)} splits', "INFO")
     logger('', "INFO")
 
-    logger('Processing strategy:', "INFO")
-    logger('  - Load data in hourly batches', "INFO")
-    logger('  - Filter documents with null values in features array', "INFO")
-    logger('  - Write to temporary collection with temporal ordering', "INFO")
-    logger('  - Atomically replace original collection', "INFO")
-    logger('', "INFO")
+    if mode == 'train':
+        # TRAIN MODE: Process all split collections
+        # Discover all split collections
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = client[DB_NAME]
+        all_collections = db.list_collection_names()
 
-    # CRITICAL: Create timestamp indexes on all split collections for efficient hourly queries
-    # Without these indexes, each hourly query performs a full collection scan O(N)
-    # With indexes: O(log N + matches) - reduces processing time dramatically
-    logger('Creating timestamp indexes on all split collections...', "INFO")
-    from pymongo import ASCENDING
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    db = client[DB_NAME]
+        # Extract split IDs from collection names matching pattern
+        import re
+        split_pattern = re.compile(rf'^{COLLECTION_PREFIX}(\d+){COLLECTION_SUFFIX}$')
+        split_ids = []
+        for coll_name in all_collections:
+            match = split_pattern.match(coll_name)
+            if match:
+                split_ids.append(int(match.group(1)))
+        split_ids = sorted(split_ids)
+        client.close()
 
-    for split_id in split_ids:
-        collection_name = f"{COLLECTION_PREFIX}{split_id}{COLLECTION_SUFFIX}"
-        input_coll = db[collection_name]
+        if not split_ids:
+            logger('No split collections found!', "ERROR")
+            return
 
-        # Check if index already exists
-        existing_indexes = list(input_coll.list_indexes())
+        logger(f'Found {len(split_ids)} split collections: {split_ids}', "INFO")
+        logger(f'Collections: {COLLECTION_PREFIX}{{0-{split_ids[-1]}}}{COLLECTION_SUFFIX}', "INFO")
+        logger(f'Processing {len(split_ids)} splits', "INFO")
+        logger('', "INFO")
+
+        logger('Processing strategy:', "INFO")
+        logger('  - Load data in hourly batches', "INFO")
+        logger('  - Filter documents with null values in features array', "INFO")
+        logger('  - Write to temporary collection with temporal ordering', "INFO")
+        logger('  - Atomically replace original collection', "INFO")
+        logger('', "INFO")
+
+        # CRITICAL: Create timestamp indexes on all split collections for efficient hourly queries
+        logger('Creating timestamp indexes on all split collections...', "INFO")
+        from pymongo import ASCENDING
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = client[DB_NAME]
+
+        for split_id in split_ids:
+            collection_name = f"{COLLECTION_PREFIX}{split_id}{COLLECTION_SUFFIX}"
+            input_coll = db[collection_name]
+
+            # Check if index already exists
+            existing_indexes = list(input_coll.list_indexes())
+            has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
+
+            if not has_timestamp_index:
+                logger(f'  Creating index on {collection_name}...', "INFO")
+                input_coll.create_index([("timestamp", ASCENDING)], background=False)
+            else:
+                logger(f'  Index already exists on {collection_name}', "INFO")
+
+        client.close()
+        logger('Timestamp indexes created/verified on all split collections', "INFO")
+        logger('', "INFO")
+
+    else:  # TEST MODE
+        # TEST MODE: Process test_data collection only
+        logger('Processing test_data collection', "INFO")
+        logger('', "INFO")
+
+        logger('Processing strategy:', "INFO")
+        logger('  - Load data in hourly batches', "INFO")
+        logger('  - Filter documents with null values in features array', "INFO")
+        logger('  - Write to temporary collection with temporal ordering', "INFO")
+        logger('  - Atomically replace original collection', "INFO")
+        logger('', "INFO")
+
+        # Create timestamp index on test_data collection
+        logger('Creating timestamp index on test_data collection...', "INFO")
+        from pymongo import ASCENDING
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db = client[DB_NAME]
+
+        test_coll = db['test_data']
+        existing_indexes = list(test_coll.list_indexes())
         has_timestamp_index = any('timestamp' in idx.get('key', {}) for idx in existing_indexes)
 
         if not has_timestamp_index:
-            logger(f'  Creating index on {collection_name}...', "INFO")
-            input_coll.create_index([("timestamp", ASCENDING)], background=False)
+            logger('  Creating index on test_data...', "INFO")
+            test_coll.create_index([("timestamp", ASCENDING)], background=False)
         else:
-            logger(f'  Index already exists on {collection_name}', "INFO")
+            logger('  Index already exists on test_data', "INFO")
 
-    client.close()
-    logger('Timestamp indexes created/verified on all split collections', "INFO")
-    logger('', "INFO")
+        client.close()
+        logger('Timestamp index created/verified', "INFO")
+        logger('', "INFO")
 
     # Create Spark session
     logger('Initializing Spark...', "INFO")
@@ -459,69 +683,90 @@ def main():
     logger('', "INFO")
 
     try:
-        # Process each split
-        split_results = []
+        if mode == 'train':
+            # TRAIN MODE: Process each split
+            split_results = []
 
-        for split_id in split_ids:
-            result = filter_split_nulls_hourly(
+            for split_id in split_ids:
+                result = filter_split_nulls_hourly(
+                    spark,
+                    DB_NAME,
+                    split_id,
+                    COLLECTION_PREFIX,
+                    COLLECTION_SUFFIX
+                )
+                split_results.append(result)
+
+            # Summary Statistics
+            log_section('NULL FILTERING SUMMARY')
+            logger('', "INFO")
+
+            total_initial = sum(r['initial_count'] for r in split_results)
+            total_final = sum(r['final_count'] for r in split_results)
+            total_removed = sum(r['removed_count'] for r in split_results)
+            overall_removal_pct = (total_removed / total_initial * 100) if total_initial > 0 else 0.0
+
+            logger('Overall Statistics:', "INFO")
+            logger(f'  Total documents before: {total_initial:,}', "INFO")
+            logger(f'  Total documents after: {total_final:,}', "INFO")
+            logger(f'  Total documents removed: {total_removed:,}', "INFO")
+            logger(f'  Overall removal rate: {overall_removal_pct:.2f}%', "INFO")
+            logger('', "INFO")
+
+            logger('Per-Split Statistics:', "INFO")
+            for result in split_results:
+                logger(f'  Split {result["split_id"]}: '
+                       f'{result["removed_count"]:,} removed '
+                       f'({result["removal_pct"]:.2f}% of {result["initial_count"]:,})',
+                       "INFO")
+            logger('', "INFO")
+
+            # Aggregate role statistics across all splits
+            all_role_stats = {}
+            for result in split_results:
+                for role, stats in result['role_stats'].items():
+                    if role not in all_role_stats:
+                        all_role_stats[role] = {'before': 0, 'after': 0}
+                    all_role_stats[role]['before'] += stats['before']
+                    all_role_stats[role]['after'] += stats['after']
+
+            if all_role_stats:
+                logger('Aggregate Role Statistics:', "INFO")
+                for role in sorted(all_role_stats.keys()):
+                    before = all_role_stats[role]['before']
+                    after = all_role_stats[role]['after']
+                    removed = before - after
+                    pct = (removed / before * 100) if before > 0 else 0.0
+                    logger(f'  {role}: {removed:,} removed ({pct:.2f}% of {before:,})',
+                           "INFO")
+
+            logger('', "INFO")
+            log_section('NULL FILTERING COMPLETE')
+            logger(f'Next stage will read clean data from {COLLECTION_PREFIX}{{id}}{COLLECTION_SUFFIX}', "INFO")
+            logger('All documents are guaranteed to have complete, valid feature arrays', "INFO")
+
+        else:  # TEST MODE
+            # TEST MODE: Process test_data collection
+            result = filter_test_data_nulls_hourly(
                 spark,
                 DB_NAME,
-                split_id,
-                COLLECTION_PREFIX,
-                COLLECTION_SUFFIX
+                'test_data'
             )
-            split_results.append(result)
-        
-        # =============================================================================
-        # Summary Statistics
-        # =============================================================================
-        
-        log_section('NULL FILTERING SUMMARY')
-        logger('', "INFO")
-        
-        total_initial = sum(r['initial_count'] for r in split_results)
-        total_final = sum(r['final_count'] for r in split_results)
-        total_removed = sum(r['removed_count'] for r in split_results)
-        overall_removal_pct = (total_removed / total_initial * 100) if total_initial > 0 else 0.0
-        
-        logger('Overall Statistics:', "INFO")
-        logger(f'  Total documents before: {total_initial:,}', "INFO")
-        logger(f'  Total documents after: {total_final:,}', "INFO")
-        logger(f'  Total documents removed: {total_removed:,}', "INFO")
-        logger(f'  Overall removal rate: {overall_removal_pct:.2f}%', "INFO")
-        logger('', "INFO")
-        
-        logger('Per-Split Statistics:', "INFO")
-        for result in split_results:
-            logger(f'  Split {result["split_id"]}: '
-                   f'{result["removed_count"]:,} removed '
-                   f'({result["removal_pct"]:.2f}% of {result["initial_count"]:,})',
-                   "INFO")
-        logger('', "INFO")
-        
-        # Aggregate role statistics across all splits
-        all_role_stats = {}
-        for result in split_results:
-            for role, stats in result['role_stats'].items():
-                if role not in all_role_stats:
-                    all_role_stats[role] = {'before': 0, 'after': 0}
-                all_role_stats[role]['before'] += stats['before']
-                all_role_stats[role]['after'] += stats['after']
-        
-        if all_role_stats:
-            logger('Aggregate Role Statistics:', "INFO")
-            for role in sorted(all_role_stats.keys()):
-                before = all_role_stats[role]['before']
-                after = all_role_stats[role]['after']
-                removed = before - after
-                pct = (removed / before * 100) if before > 0 else 0.0
-                logger(f'  {role}: {removed:,} removed ({pct:.2f}% of {before:,})',
-                       "INFO")
-        
-        logger('', "INFO")
-        log_section('NULL FILTERING COMPLETE')
-        logger(f'Next stage (12) will read clean data from {COLLECTION_PREFIX}{{id}}{COLLECTION_SUFFIX}', "INFO")
-        logger('All documents are guaranteed to have complete, valid feature arrays', "INFO")
+
+            # Summary Statistics
+            log_section('NULL FILTERING SUMMARY')
+            logger('', "INFO")
+
+            logger('Test Data Statistics:', "INFO")
+            logger(f'  Documents before: {result["initial_count"]:,}', "INFO")
+            logger(f'  Documents after: {result["final_count"]:,}', "INFO")
+            logger(f'  Documents removed: {result["removed_count"]:,}', "INFO")
+            logger(f'  Removal rate: {result["removal_pct"]:.2f}%', "INFO")
+            logger('', "INFO")
+
+            log_section('NULL FILTERING COMPLETE')
+            logger('Next stage will read clean data from test_data collection', "INFO")
+            logger('All documents are guaranteed to have complete, valid feature arrays', "INFO")
         
     finally:
         spark.stop()

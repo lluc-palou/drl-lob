@@ -11,6 +11,7 @@ class ExperimentType(Enum):
     EXP1_BOTH_ORIGINAL = 1      # Both codebook + features, train/val on original
     EXP2_FEATURES_ORIGINAL = 2  # Features only, train/val on original
     EXP3_CODEBOOK_ORIGINAL = 3  # Codebook only, train/val on original
+    EXP4_SYNTHETIC_BINS = 4     # Synthetic data with codebook bins (array of 1001) instead of indices
 
 
 @dataclass
@@ -36,8 +37,8 @@ class ModelConfig:
     n_heads: int = 8                     # Number of attention heads (increased from 4)
     n_layers: int = 4                    # Number of transformer layers (increased from 2)
     dropout: float = 0.2                 # Dropout rate (increased for regularization)
-    window_size: int = 10                # Observation window (W samples) - reduced from 50
-    horizon: int = 1                     # Reward horizon - immediate next return (not lookahead)
+    window_size: int = 10                # Observation window (W samples) - matches horizon for temporal context
+    horizon: int = 10                    # Reward horizon - cumulative forward returns over H steps
     min_log_std: float = -20.0           # Minimum log std for policy
     max_log_std: float = 2.0             # Maximum log std for policy
     ffn_expansion: int = 4               # FFN dimension = d_model × ffn_expansion
@@ -83,14 +84,14 @@ class PPOConfig:
     weight_decay: float = 1e-3           # L2 regularization
     gamma: float = 0.95                  # Discount factor
     gae_lambda: float = 0.95             # GAE lambda parameter
-    clip_ratio: float = 0.1              # PPO clipping parameter (reduced for stability with high variance)
-    value_coef: float = 1.0              # Value loss coefficient (increased for better value estimates)
-    entropy_coef: float = 0.01           # Fixed entropy coefficient (encourages exploration)
-    uncertainty_coef: float = 0.1        # Uncertainty penalty coefficient (prevents std exploitation)
-    activity_coef: float = 0.001         # Inactivity penalty coefficient (prevents no-trade collapse, reduced pressure)
+    clip_ratio: float = 0.2              # PPO clipping parameter (increased from 0.1 for better policy updates)
+    value_coef: float = 0.25             # Value loss coefficient (REDUCED from 0.5 to prevent value dominance)
+    entropy_coef: float = 0.1            # Entropy coefficient (INCREASED 10x from 0.01 to prevent collapse)
+    uncertainty_coef: float = 0.08       # Uncertainty penalty coefficient (INCREASED to require higher confidence)
+    turnover_coef: float = 0.05          # Turnover penalty coefficient (penalizes position changes to reduce trade frequency)
     max_grad_norm: float = 0.5           # Gradient clipping norm
-    n_epochs: int = 2                    # PPO epochs per update (reduced for speed)
-    batch_size: int = 256                # Minibatch size (increased 8x to utilize GPU)
+    n_epochs: int = 4                    # PPO epochs per update (INCREASED from 1 - critical for learning)
+    batch_size: int = 512                # Minibatch size (reduced for multiple gradient updates per epoch)
     buffer_capacity: int = 2048          # Trajectory buffer size (increased 4x)
     
 
@@ -107,10 +108,10 @@ class RewardConfig:
 @dataclass
 class TrainingConfig:
     """Training procedure configuration."""
-    max_epochs: int = 50                 # Maximum training epochs (increased from 10)
-    patience: int = 7                    # Early stopping patience (increased from 3)
+    max_epochs: int = 100                # Maximum training epochs (INCREASED for full convergence)
+    patience: int = 40                   # Early stopping patience (INCREASED to allow slow convergence at low LR)
     min_delta: float = 0.01              # Minimum improvement for early stopping
-    validate_every: int = 1              # Validate every N epochs
+    validate_every: int = 1              # Validate every epoch
     log_every: int = 10                  # Log every N episodes
     checkpoint_dir: str = "checkpoints"  # Directory for model checkpoints
     log_dir: str = "logs"                # Directory for logs

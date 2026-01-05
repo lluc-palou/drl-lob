@@ -94,15 +94,31 @@ def ppo_update(
     )
 
     # Normalize advantages for policy gradient (stabilizes training)
-    # NOTE: returns are NOT normalized - value function learns raw reward scale
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-    
+    advantages_mean = advantages.mean()
+    advantages_std = advantages.std()
+    advantages = (advantages - advantages_mean) / (advantages_std + 1e-8)
+
+    # Store raw return statistics for diagnostics
+    returns_mean = returns.mean()
+    returns_std = returns.std()
+
+    # Normalize returns for value learning (stabilizes training)
+    # Policy still uses normalized advantages (computed from raw returns via GAE)
+    # This prevents value loss divergence while keeping policy incentives unchanged
+    if returns_std > 1e-8:
+        returns_normalized = (returns - returns_mean) / (returns_std + 1e-8)
+    else:
+        returns_normalized = returns - returns_mean
+
     # PPO epochs
     total_policy_loss = 0
     total_value_loss = 0
     total_entropy = 0
     total_uncertainty = 0
     total_activity = 0
+    total_turnover = 0       # Track position changes (turnover)
+    total_clip_fraction = 0  # Track how often clipping activates
+    total_approx_kl = 0      # Track KL divergence
     n_updates = 0
     
     for epoch in range(config.n_epochs):
@@ -119,7 +135,7 @@ def ppo_update(
             mb_actions = actions[start:end]
             mb_old_log_probs = old_log_probs[start:end]
             mb_advantages = advantages[start:end]
-            mb_returns = returns[start:end]
+            mb_returns_normalized = returns_normalized[start:end]  # Normalized for value learning
 
             # Forward pass - call evaluate_actions with correct arguments based on experiment
             from src.ppo.config import ExperimentType
@@ -147,9 +163,16 @@ def ppo_update(
             surr2 = torch.clamp(ratio, 1 - config.clip_ratio, 1 + config.clip_ratio) * mb_advantages
             policy_loss = -torch.min(surr1, surr2).mean()
 
-            # Value loss (MSE)
-            # Uses RAW (unnormalized) returns - value function predicts actual reward scale
-            value_loss = F.mse_loss(new_values, mb_returns)
+            # Diagnostic: Track clipping fraction (how often ratio is clipped)
+            clip_fraction = torch.mean((torch.abs(ratio - 1.0) > config.clip_ratio).float()).item()
+
+            # Diagnostic: Approximate KL divergence (for early stopping)
+            approx_kl = ((ratio - 1.0) - torch.log(ratio)).mean().item()
+
+            # Value loss (MSE on normalized returns)
+            # Normalization prevents divergence from unbounded raw returns
+            # Policy gradient is unchanged (uses normalized advantages from raw returns via GAE)
+            value_loss = F.mse_loss(new_values, mb_returns_normalized)
 
             # Fixed entropy bonus (encourages exploration)
             entropy_bonus = config.entropy_coef * entropy.mean()
@@ -157,19 +180,21 @@ def ppo_update(
             # Uncertainty penalty (prevents std exploitation)
             uncertainty_penalty = config.uncertainty_coef * std.mean()
 
-            # Inactivity penalty (prevents no-trade collapse)
-            # Penalizes low |actions| (close to zero positions)
-            # When |actions| → 0: inactivity → 1 (high penalty)
-            # When |actions| → 1: inactivity → 0 (no penalty)
-            inactivity = (1.0 - torch.abs(mb_actions)).mean()
-            inactivity_penalty = config.activity_coef * inactivity
+            # Turnover penalty (penalizes frequent position changes to encourage selective trading)
+            # Compute position changes: |action[t] - action[t-1]|
+            # Higher penalty → fewer trades → higher quality trades
+            if mb_actions.shape[0] > 1:
+                turnover = torch.abs(mb_actions[1:] - mb_actions[:-1]).mean()
+            else:
+                turnover = torch.tensor(0.0, device=mb_actions.device)
+            turnover_penalty = config.turnover_coef * turnover
 
-            # Total loss (policy + value - entropy + inactivity + uncertainty)
+            # Total loss (policy + value - entropy + turnover + uncertainty)
             # Subtract bonuses, add penalties
             loss = (policy_loss +
                    config.value_coef * value_loss -
                    entropy_bonus +
-                   inactivity_penalty +
+                   turnover_penalty +
                    uncertainty_penalty)
 
             # Optimization step
@@ -184,6 +209,9 @@ def ppo_update(
             total_entropy += entropy.mean().item()
             total_uncertainty += std.mean().item()
             total_activity += torch.abs(mb_actions).mean().item()  # Still track activity for interpretability
+            total_turnover += turnover.item()  # Track turnover (position changes)
+            total_clip_fraction += clip_fraction
+            total_approx_kl += approx_kl
             n_updates += 1
 
     return {
@@ -192,5 +220,12 @@ def ppo_update(
         'entropy': total_entropy / n_updates,
         'uncertainty': total_uncertainty / n_updates,
         'activity': total_activity / n_updates,  # Average |actions|
+        'turnover': total_turnover / n_updates,  # Average position changes
+        'clip_fraction': total_clip_fraction / n_updates,  # How often clipping occurs
+        'approx_kl': total_approx_kl / n_updates,  # Approximate KL divergence
+        'advantages_mean': advantages_mean.item(),  # Raw advantage statistics
+        'advantages_std': advantages_std.item(),
+        'returns_mean': returns_mean.item(),  # Raw return statistics
+        'returns_std': returns_std.item(),
         'n_updates': n_updates
     }

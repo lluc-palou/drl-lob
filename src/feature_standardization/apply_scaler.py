@@ -57,14 +57,15 @@ class EWMAStandardizationApplicator:
         input_collection_prefix: str = "split_",
         input_collection_suffix: str = "_input",
         output_collection_prefix: str = "split_",
-        output_collection_suffix: str = "_output"
+        output_collection_suffix: str = "_output",
+        fit_on_all_roles: bool = False
     ):
         """
         Apply EWMA standardization to a single split.
-        
+
         Processes hours sequentially to maintain EWMA state.
         Writes to output collection in cyclic pattern.
-        
+
         Args:
             split_id: Split ID to process
             feature_names: List of ALL feature names (for array indexing)
@@ -72,17 +73,23 @@ class EWMAStandardizationApplicator:
             input_collection_suffix: Input collection suffix
             output_collection_prefix: Output collection prefix
             output_collection_suffix: Output collection suffix
+            fit_on_all_roles: If True, fit on all data (train+val). If False, fit only on role='train'.
+                             Use True for test mode, False for train mode.
         """
         logger(f'=' * 80, "INFO")
         logger(f'APPLYING EWMA STANDARDIZATION - SPLIT {split_id}', "INFO")
         logger(f'=' * 80, "INFO")
-        
+
         input_collection = f"{input_collection_prefix}{split_id}{input_collection_suffix}"
         output_collection = f"{output_collection_prefix}{split_id}{output_collection_suffix}"
-        
+
         logger(f'Input: {input_collection}', "INFO")
         logger(f'Output: {output_collection}', "INFO")
         logger(f'Standardizing {len(self.final_halflifes)} features', "INFO")
+        if fit_on_all_roles:
+            logger(f'Fitting mode: ALL data (train+val)', "INFO")
+        else:
+            logger(f'Fitting mode: Training data only', "INFO")
         
         # Get all hours
         all_hours = get_all_hours(self.spark, self.db_name, input_collection)
@@ -162,8 +169,13 @@ class EWMAStandardizationApplicator:
 
                     # Update EWMA state (sequential learning)
                     # For training data, update the scaler
-                    if role in ('train', 'train_warmup'):
+                    if fit_on_all_roles:
+                        # TEST MODE: Update scaler on all data (train+val)
                         scaler.update(raw_value)
+                    else:
+                        # TRAIN MODE: Update scaler only on training data
+                        if role in ('train', 'train_warmup'):
+                            scaler.update(raw_value)
 
                     # Standardize using current EWMA state
                     standardized = scaler.standardize(raw_value, clip_std=self.clip_std)
@@ -178,20 +190,22 @@ class EWMAStandardizationApplicator:
             if not transformed_rows:
                 logger(f'  Hour {hour_idx + 1}/{len(all_hours)}: No data to write', "WARNING")
                 continue
-            
-            # Convert back to DataFrame
-            transformed_df = self.spark.createDataFrame(transformed_rows, schema=hour_df.schema)
-            
+
+            # Convert back to DataFrame using pandas intermediate (avoids Spark temp file issues on Windows)
+            import pandas as pd
+            pandas_df = pd.DataFrame(transformed_rows)
+            transformed_df = self.spark.createDataFrame(pandas_df, schema=hour_df.schema)
+
             # Drop _id if present
             if '_id' in transformed_df.columns:
                 transformed_df = transformed_df.drop('_id')
-            
-            # Sort by timestamp
-            transformed_df = transformed_df.orderBy("timestamp")
-            
+
+            # Coalesce to single partition to avoid shuffle (prevents Windows temp file issues)
+            transformed_df = transformed_df.coalesce(1)
+
             # Write with ordered writes
             write_mode = "overwrite" if first_batch else "append"
-            
+
             (transformed_df.write.format("mongodb")
              .option("database", self.db_name)
              .option("collection", output_collection)
@@ -212,7 +226,167 @@ class EWMAStandardizationApplicator:
         
         logger(f'Split {split_id}: Processed {total_processed:,} documents', "INFO")
         logger(f'Written to {output_collection}', "INFO")
-    
+
+        return total_processed
+
+    def apply_to_collection(
+        self,
+        input_collection: str,
+        output_collection: str,
+        feature_names: List[str]
+    ):
+        """
+        Apply EWMA standardization to a collection (e.g., test_data).
+
+        Processes hours sequentially to maintain EWMA state.
+
+        Args:
+            input_collection: Input collection name
+            output_collection: Output collection name
+            feature_names: List of ALL feature names (for array indexing)
+
+        Returns:
+            total_processed: Number of documents processed
+        """
+        logger(f'=' * 80, "INFO")
+        logger(f'APPLYING EWMA STANDARDIZATION - {input_collection}', "INFO")
+        logger(f'=' * 80, "INFO")
+
+        logger(f'Input: {input_collection}', "INFO")
+        logger(f'Output: {output_collection}', "INFO")
+        logger(f'Standardizing {len(self.final_halflifes)} features', "INFO")
+
+        # Get all hours
+        all_hours = get_all_hours(self.spark, self.db_name, input_collection)
+
+        if not all_hours:
+            logger(f'No hours found in {input_collection}', "ERROR")
+            return 0
+
+        logger(f'Processing {len(all_hours)} hours sequentially', "INFO")
+
+        # Process hours sequentially to maintain EWMA state
+        total_processed = 0
+        first_batch = True
+
+        for hour_idx, start_hour in enumerate(all_hours):
+            hour_start = time.time()
+            end_hour = start_hour + timedelta(hours=1)
+
+            # Load hour batch
+            hour_df = load_hour_batch(
+                self.spark,
+                self.db_name,
+                input_collection,
+                start_hour,
+                end_hour
+            )
+
+            # Collect hour data (sorted by timestamp)
+            rows = hour_df.collect()
+
+            if not rows:
+                continue
+
+            hour_count = len(rows)
+
+            # Process rows sequentially
+            transformed_rows = []
+
+            for row in rows:
+                row_dict = row.asDict()
+
+                # Handle timestamp timezone
+                ts = row_dict.get('timestamp')
+                if ts and hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+                    import pytz
+                    if ts.tzinfo != pytz.UTC:
+                        ts = ts.astimezone(pytz.UTC)
+                    ts = ts.replace(tzinfo=None)
+                    row_dict['timestamp'] = ts
+
+                features = row_dict.get('features')
+                role = row_dict.get('role')
+
+                if features is None:
+                    transformed_rows.append(row_dict)
+                    continue
+
+                # Apply EWMA standardization - vectorized approach
+                features_array = np.array(features, dtype=np.float64)
+
+                # Update EWMA and standardize each feature
+                for feat_idx, feat_name in enumerate(feature_names):
+                    # Skip if not in standardization list
+                    if feat_name not in self.scalers:
+                        continue
+
+                    if feat_idx >= len(features_array):
+                        continue
+
+                    raw_value = features_array[feat_idx]
+
+                    if not np.isfinite(raw_value):
+                        continue
+
+                    scaler = self.scalers[feat_name]
+
+                    # Update EWMA state (continuous learning on all data)
+                    # This matches train mode behavior where scalers adapt to the data
+                    scaler.update(raw_value)
+
+                    # Standardize using current EWMA state
+                    standardized = scaler.standardize(raw_value, clip_std=self.clip_std)
+
+                    if np.isfinite(standardized):
+                        features_array[feat_idx] = standardized
+
+                # Convert to Python list (NumPy arrays can't go directly to Spark)
+                row_dict['features'] = features_array.tolist()
+                transformed_rows.append(row_dict)
+
+            if not transformed_rows:
+                logger(f'  Hour {hour_idx + 1}/{len(all_hours)}: No data to write', "WARNING")
+                continue
+
+            # Convert back to DataFrame using pandas intermediate (avoids Spark temp file issues on Windows)
+            import pandas as pd
+            pandas_df = pd.DataFrame(transformed_rows)
+            transformed_df = self.spark.createDataFrame(pandas_df, schema=hour_df.schema)
+
+            # Drop _id if present
+            if '_id' in transformed_df.columns:
+                transformed_df = transformed_df.drop('_id')
+
+            # Coalesce to single partition to avoid shuffle (prevents Windows temp file issues)
+            transformed_df = transformed_df.coalesce(1)
+
+            # Write with ordered writes
+            write_mode = "overwrite" if first_batch else "append"
+
+            (transformed_df.write.format("mongodb")
+             .option("database", self.db_name)
+             .option("collection", output_collection)
+             .option("ordered", "true")
+             .mode(write_mode)
+             .save())
+
+            total_processed += len(transformed_rows)
+            first_batch = False
+
+            hour_duration = time.time() - hour_start
+
+            if (hour_idx + 1) % 10 == 0 or (hour_idx + 1) == len(all_hours):
+                logger(f'  Hour {hour_idx + 1}/{len(all_hours)} '
+                       f'({start_hour.strftime("%Y-%m-%d %H:%M")}): '
+                       f'{len(transformed_rows):,} samples in {hour_duration:.2f}s',
+                       "INFO")
+
+        logger(f'{input_collection}: Processed {total_processed:,} documents', "INFO")
+        logger(f'Written to {output_collection}', "INFO")
+
+        return total_processed
+
     def get_scaler_states(self) -> Dict:
         """
         Get current EWMA scaler states.

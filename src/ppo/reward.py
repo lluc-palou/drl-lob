@@ -221,3 +221,50 @@ def compute_unrealized_pnl(
         Unrealized PnL
     """
     return position * target
+
+
+def compute_directional_bonus(
+    position: float,
+    target: float,
+    bonus_weight: float = 0.000002
+) -> float:
+    """
+    Compute directional accuracy bonus for reward shaping.
+
+    Provides additional reward signal when agent predicts direction correctly,
+    independent of return magnitude. This helps when predictive signal is weak
+    but directionally accurate.
+
+    Formula:
+        - If position × target > 0 (correct): +bonus_weight × |position|
+        - If position × target < 0 (wrong): -bonus_weight × |position|
+        - If position ≈ 0 (inactive): 0
+
+    Args:
+        position: Current position (in [-1, 1])
+        target: Multi-step forward return
+        bonus_weight: Bonus magnitude per unit position (default: 0.000002, ~25% of H=10 gross PnL)
+
+    Returns:
+        Directional bonus/penalty
+
+    Example:
+        position=0.7, target=0.0001 (correct) → bonus = +0.0000014
+        position=0.7, target=-0.0001 (wrong) → bonus = -0.0000014
+        position=0.0, target=0.0001 (no position) → bonus = 0
+
+    Notes:
+        - Bonus calibrated to be smaller than gross PnL (avoids dominating signal)
+        - Does NOT affect logged gross_pnl metrics (only reward signal)
+        - Helps agent learn direction even when return magnitude is small
+    """
+    # No position, no bonus
+    if abs(position) < 1e-6:
+        return 0.0
+
+    # Bonus for correct direction, penalty for wrong direction
+    # Scaled by position size (higher conviction → higher stakes)
+    if (position * target) > 0:
+        return bonus_weight * abs(position)
+    else:
+        return -bonus_weight * abs(position)

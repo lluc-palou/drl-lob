@@ -156,10 +156,10 @@ class ActorCriticTransformer(nn.Module):
         mean = self.actor_mean(last_hidden)
         log_std = self.actor_logstd(last_hidden)
         log_std = torch.clamp(log_std, self.config.min_log_std, self.config.max_log_std)
-        
+
         # Critic: state value
         value = self.critic(last_hidden)
-        
+
         return mean, log_std, value
     
     def act(
