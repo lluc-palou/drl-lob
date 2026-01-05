@@ -331,10 +331,9 @@ class EWMAStandardizationApplicator:
 
                     scaler = self.scalers[feat_name]
 
-                    # For test mode, we only transform (don't update scaler)
-                    # The scaler was already fitted on training data
-                    # NOTE: If role exists and is 'train', we could update,
-                    # but for test_data there typically is no role field
+                    # Update EWMA state (continuous learning on all data)
+                    # This matches train mode behavior where scalers adapt to the data
+                    scaler.update(raw_value)
 
                     # Standardize using current EWMA state
                     standardized = scaler.standardize(raw_value, clip_std=self.clip_std)
