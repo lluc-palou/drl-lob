@@ -85,9 +85,9 @@ class PPOConfig:
     gamma: float = 0.95                  # Discount factor
     gae_lambda: float = 0.95             # GAE lambda parameter
     clip_ratio: float = 0.2              # PPO clipping parameter (increased from 0.1 for better policy updates)
-    value_coef: float = 0.15             # Value loss coefficient (REDUCED from 0.25 to reduce value dominance)
-    entropy_coef: float = 0.15           # Entropy coefficient (INCREASED from 0.1 to restore exploration)
-    uncertainty_coef: float = 0.03       # Uncertainty penalty coefficient (REDUCED from 0.08 to allow more action)
+    value_coef: float = 0.20             # Value loss coefficient (middle ground: was 0.25 → 0.15 → 0.20)
+    entropy_coef: float = 0.11           # Entropy coefficient (middle ground: was 0.10 → 0.15 → 0.11)
+    uncertainty_coef: float = 0.05       # Uncertainty penalty coefficient (middle ground: was 0.08 → 0.03 → 0.05)
     turnover_coef: float = 0.015         # Turnover penalty coefficient (REDUCED from 0.05 to allow more trading)
     max_grad_norm: float = 0.5           # Gradient clipping norm
     n_epochs: int = 6                    # PPO epochs per update (INCREASED from 4 for more learning per buffer)
