@@ -80,18 +80,18 @@ class ModelConfig:
 @dataclass
 class PPOConfig:
     """PPO training hyperparameters."""
-    learning_rate: float = 1e-4          # Adam learning rate
+    learning_rate: float = 2e-4          # Adam learning rate (INCREASED from 1e-4 to escape local minima)
     weight_decay: float = 1e-3           # L2 regularization
     gamma: float = 0.95                  # Discount factor
     gae_lambda: float = 0.95             # GAE lambda parameter
     clip_ratio: float = 0.2              # PPO clipping parameter (increased from 0.1 for better policy updates)
-    value_coef: float = 0.25             # Value loss coefficient (REDUCED from 0.5 to prevent value dominance)
-    entropy_coef: float = 0.1            # Entropy coefficient (INCREASED 10x from 0.01 to prevent collapse)
-    uncertainty_coef: float = 0.08       # Uncertainty penalty coefficient (INCREASED to require higher confidence)
-    turnover_coef: float = 0.05          # Turnover penalty coefficient (penalizes position changes to reduce trade frequency)
+    value_coef: float = 0.15             # Value loss coefficient (REDUCED from 0.25 to reduce value dominance)
+    entropy_coef: float = 0.15           # Entropy coefficient (INCREASED from 0.1 to restore exploration)
+    uncertainty_coef: float = 0.03       # Uncertainty penalty coefficient (REDUCED from 0.08 to allow more action)
+    turnover_coef: float = 0.015         # Turnover penalty coefficient (REDUCED from 0.05 to allow more trading)
     max_grad_norm: float = 0.5           # Gradient clipping norm
-    n_epochs: int = 4                    # PPO epochs per update (INCREASED from 1 - critical for learning)
-    batch_size: int = 512                # Minibatch size (reduced for multiple gradient updates per epoch)
+    n_epochs: int = 6                    # PPO epochs per update (INCREASED from 4 for more learning per buffer)
+    batch_size: int = 2048               # Minibatch size (INCREASED from 512 for stable value estimates)
     buffer_capacity: int = 2048          # Trajectory buffer size (increased 4x)
     
 
@@ -108,8 +108,8 @@ class RewardConfig:
 @dataclass
 class TrainingConfig:
     """Training procedure configuration."""
-    max_epochs: int = 100                # Maximum training epochs (INCREASED for full convergence)
-    patience: int = 40                   # Early stopping patience (INCREASED to allow slow convergence at low LR)
+    max_epochs: int = 150                # Maximum training epochs (INCREASED from 100 for full convergence)
+    patience: int = 50                   # Early stopping patience (INCREASED from 40 to allow slow convergence)
     min_delta: float = 0.01              # Minimum improvement for early stopping
     validate_every: int = 1              # Validate every epoch
     log_every: int = 10                  # Log every N episodes
