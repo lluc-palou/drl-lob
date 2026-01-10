@@ -215,6 +215,10 @@ class EpisodeLoader:
         Synthetic data is organized by sequence_id (100 sequences per split),
         with each sequence containing 120 samples ordered by position_in_sequence.
 
+        Since synthetic data has NO 'role' field, we split by sequence_id:
+        - Train: sequences 0-79 (80 sequences, 80%)
+        - Validation: sequences 80-99 (20 sequences, 20%)
+
         Args:
             split_id: Split identifier
             role: 'train', 'val', or None (None loads all roles)
@@ -224,16 +228,18 @@ class EpisodeLoader:
         """
         collection = self.db[f'split_{split_id}_synthetic']  # Synthetic data collection
 
-        # Build query filter
+        # Build query filter based on sequence_id (synthetic data has no 'role' field)
         if role is None:
-            # Load all roles
+            # Load all sequences (0-99)
             query_filter = {}
-        else:
-            # Map 'val' to 'validation' for database query
-            db_role = 'validation' if role == 'val' else role
-            query_filter = {'role': db_role}
+        elif role == 'train':
+            # Train: sequences 0-79 (80%)
+            query_filter = {'sequence_id': {'$lt': 80}}
+        else:  # role == 'val' or 'validation'
+            # Validation: sequences 80-99 (20%)
+            query_filter = {'sequence_id': {'$gte': 80}}
 
-        # Query synthetic samples with role filter, sorted by sequence and position
+        # Query synthetic samples with sequence filter, sorted by sequence and position
         cursor = collection.find(
             query_filter,
             sort=[('sequence_id', 1), ('position_in_sequence', 1)]
