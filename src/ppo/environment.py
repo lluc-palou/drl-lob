@@ -251,12 +251,17 @@ class EpisodeLoader:
         for doc in cursor:
             sequence_id = doc['sequence_id']
 
+            # Extract and convert timestamp to Unix timestamp (float)
+            timestamp = doc.get('timestamp', 0)
+            if isinstance(timestamp, datetime):
+                timestamp = timestamp.timestamp()
+
             # Prepare sample (defer tensorization until later for efficiency)
             # Synthetic data: Uses same feature source as Experiment 3 (codebook indices only)
             sample = {
                 'codebook': doc['codebook_index'],  # Codebook index (0-127)
                 'features': None,  # No features for codebook-only experiment
-                'timestamp': doc.get('timestamp', 0),  # Synthetic timestamps
+                'timestamp': timestamp,  # Convert datetime to Unix timestamp
                 'target': doc['target'],
                 'sequence_id': sequence_id,
                 'position_in_sequence': doc['position_in_sequence']
