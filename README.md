@@ -250,8 +250,8 @@ mongod --dbpath /path/to/data  # Linux/Mac
 
 ## License
 
-[Add license information]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
 
-[Add contact information]
+Lluc Palou Masmartí - paloumasmarti@gmail.com
