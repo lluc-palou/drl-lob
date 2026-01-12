@@ -62,7 +62,7 @@ drl-lob/
 │   │   └── __init__.py
 │   │
 │   ├── lob_standardization/                    <- LOB standardization
-│   │   ├── price_standardizer.py               <- Price/spread normalization (tick-based)
+│   │   ├── price_standardizer.py               <- Price standardization
 │   │   ├── volume_quantizer.py                 <- Volume quantization to bins
 │   │   ├── volume_coverage_analyzer.py         <- Analyze volume distribution coverage
 │   │   ├── batch_processor.py                  <- Batch processing for large datasets
