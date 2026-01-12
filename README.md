@@ -1,4 +1,4 @@
-# Deep Reinforcement Learning for Limit Order Book Trading
+# Deep Reinforcement Learning for Trading in Cryptocurrency Markets Using Limit Order Book Data and Synthetic Augmentation
 
 This project explores whether exploitable patterns exist in the market microstructure of high-frequency limit order book data from cryptocurrency assets. The research investigates if market inefficiencies during price formation can be identified and exploited through machine learning to develop profitable algorithmic trading strategies.
 
