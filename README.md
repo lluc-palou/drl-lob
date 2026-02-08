@@ -13,7 +13,7 @@ This work was developed as the final degree project for the BSc in Data Science 
 
 ## Pipeline Overview
 
-![Pipeline Architecture](Pipeline.svg)
+![Pipeline Architecture](Pipeline.png)
 
 The diagram above illustrates the complete end-to-end pipeline, from raw limit order book data collection through feature engineering, model training (VQ-VAE, Prior, PPO), and final evaluation with rigorous cross-validation.
 
